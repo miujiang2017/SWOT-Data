@@ -1,0 +1,10 @@
+*.mat
+*.asv
+.DS_Store
+__MACOSX/
+.venv/
+venv/
+data/
+outputs/
+results/
+figures/
