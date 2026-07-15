@@ -97,20 +97,21 @@ Q_results = [];
 load('Phi_save.mat')
 load('Q_save.mat')
 %%
-for ib =181%1:numel(data_KF_out)%1:numel(data_KF_out)
+for ib =5%1:numel(data_KF_out)%1:numel(data_KF_out)
     ib
     sg_basin = data_KF_out(ib);
     % Loop over each path in the basin
-    for ip = 1:numel(sg_basin.paths)
+    for ip = 1%:numel(sg_basin.paths)
         sg_path = get_path_struct(sg_basin, ip);
+        % sg_path = subset_sg_path_reaches(sg_path, 35, 46);  % 只保留第 3 到第 8 个 reach
         nR = length(sg_path.rch_len{1});  % Number of reaches
 
         %% Build transition matrix Phi and process noise
-        [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path, state_ep);
-         Phi_save{ib}{ip} =Phi_st;
-        Q_save{ib}{ip} =Q_st ;
-        % Phi_st=Phi_save{ib}{ip};
-        % Q_st = Q_save{ib}{ip} ;
+        % [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path, state_ep);
+        %  Phi_save{ib}{ip} =Phi_st;
+        % Q_save{ib}{ip} =Q_st ;
+        Phi_st=Phi_save{ib}{ip};
+        Q_st = Q_save{ib}{ip};
         obs_mean = sg_path.Q_prior{1, 1}(:,1);
         xn1n1 = zeros(nR*state_ep,1);%reshape(sg_path.start_value{1,1} - obs_mean, [], 1);
         sigma0 = calc_sigma0(sg_path);
@@ -126,16 +127,16 @@ for ib =181%1:numel(data_KF_out)%1:numel(data_KF_out)
         % [H, zn, R, z_idx, ~] = build_H_obs_SWOT_dA(sg_path, i, state_ep);
         % 1: SIC4DVar 2: MOMMA 3: geoBAM 4: MetroMan 5:SADS
         [H_Q,z_Q,R_Q] = build_H_obs_SWOT_Q(sg_path,state_ep,i,1); %
-        [H_Q2,z_Q2,R_Q2] = build_H_obs_SWOT_Q(sg_path,state_ep,i,2); %
-        [H_Q3,z_Q3,R_Q3] = build_H_obs_SWOT_Q(sg_path,state_ep,i,3); %
-        [H_Q4,z_Q4,R_Q4] = build_H_obs_SWOT_Q(sg_path,state_ep,i,4); %
+        % [H_Q2,z_Q2,R_Q2] = build_H_obs_SWOT_Q(sg_path,state_ep,i,2); %
+        % [H_Q3,z_Q3,R_Q3] = build_H_obs_SWOT_Q(sg_path,state_ep,i,3); %
+        % [H_Q4,z_Q4,R_Q4] = build_H_obs_SWOT_Q(sg_path,state_ep,i,4); %
         % [H_Q5,z_Q5,R_Q5] = build_H_obs_SWOT_Q(sg_path,state_ep,i,5); %
-        if ~isempty(z_Q)| ~isempty(z_Q2)|~isempty(z_Q3)|~isempty(z_Q4)%|~isempty(z_Q5)
+        if ~isempty(z_Q)%| ~isempty(z_Q2)|~isempty(z_Q3)|~isempty(z_Q4)%|~isempty(z_Q5)
             H =[];R=[];zn=[];
             [H, zn, R] = append_Qobs(H, zn, R, H_Q,  z_Q,  R_Q);
-            [H, zn, R] = append_Qobs(H, zn, R, H_Q2, z_Q2, R_Q2);
-            [H, zn, R] = append_Qobs(H, zn, R, H_Q3, z_Q3, R_Q3);
-            [H, zn, R] = append_Qobs(H, zn, R, H_Q4, z_Q4, R_Q4);
+            % [H, zn, R] = append_Qobs(H, zn, R, H_Q2, z_Q2, R_Q2);
+            % [H, zn, R] = append_Qobs(H, zn, R, H_Q3, z_Q3, R_Q3);
+            % [H, zn, R] = append_Qobs(H, zn, R, H_Q4, z_Q4, R_Q4);
             % [H, zn, R] = append_Qobs(H, zn, R, H_Q5, z_Q5, R_Q5);
 
             % Berechnung Kalman Gain:
@@ -163,16 +164,16 @@ for ib =181%1:numel(data_KF_out)%1:numel(data_KF_out)
             % [H, zn, R, z_idx, ~] = build_H_obs_SWOT_dA(sg_path, i, state_ep);
             % 1: SIC4DVar 2: MOMMA 3: geoBAM
             [H_Q,z_Q,R_Q] = build_H_obs_SWOT_Q(sg_path,state_ep,i,1); %
-            [H_Q2,z_Q2,R_Q2] = build_H_obs_SWOT_Q(sg_path,state_ep,i,2); %
+            % [H_Q2,z_Q2,R_Q2] = build_H_obs_SWOT_Q(sg_path,state_ep,i,2); %
             % [H_Q3,z_Q3,R_Q3] = build_H_obs_SWOT_Q(sg_path,state_ep,i,3); %
-            [H_Q4,z_Q4,R_Q4] = build_H_obs_SWOT_Q(sg_path,state_ep,i,4); %
+            % [H_Q4,z_Q4,R_Q4] = build_H_obs_SWOT_Q(sg_path,state_ep,i,4); %
             % [H_Q5,z_Q5,R_Q5] = build_H_obs_SWOT_Q(sg_path,state_ep,i,5); %
-            if ~isempty(z_Q)| ~isempty(z_Q2)|~isempty(z_Q4)%|~isempty(z_Q5)
+            if ~isempty(z_Q)%| ~isempty(z_Q2)|~isempty(z_Q4)%|~isempty(z_Q5)
                 H =[];R=[];zn=[];
                 [H, zn, R] = append_Qobs(H, zn, R, H_Q,  z_Q,  R_Q);
-                [H, zn, R] = append_Qobs(H, zn, R, H_Q2, z_Q2, R_Q2);
+                % [H, zn, R] = append_Qobs(H, zn, R, H_Q2, z_Q2, R_Q2);
                 %[H, zn, R] = append_Qobs(H, zn, R, H_Q3, z_Q3, R_Q3);
-                [H, zn, R] = append_Qobs(H, zn, R, H_Q4, z_Q4, R_Q4);
+                % [H, zn, R] = append_Qobs(H, zn, R, H_Q4, z_Q4, R_Q4);
                 % [H, zn, R] = append_Qobs(H, zn, R, H_Q5, z_Q5, R_Q5);
 
                 % Compute Kalman gain
@@ -246,7 +247,144 @@ plot_reaches_on_map(data_KF_out, file_prefix)
 plot_metric_improvement_boxchart(Q_results)
 
 %%
-% median flow regime
+diag_rows = table();
+
+for ib = 1:numel(data_KF_out)
+    sg_basin = data_KF_out(ib);
+
+    if ~isfield(sg_basin,'paths') || isempty(sg_basin.paths)
+        continue
+    end
+
+    for ip = 1:numel(sg_basin.paths)
+
+        sg_path = get_path_struct(sg_basin, ip);
+
+        if ~isfield(sg_path,'Q_prior') || isempty(sg_path.Q_prior) || isempty(sg_path.Q_prior{1})
+            continue
+        end
+
+        Qprior = sg_path.Q_prior{1}(:,1);
+        nR = numel(Qprior);
+
+        jump_prev = nan(nR,1);
+        jump_prev(2:end) = max(Qprior(2:end), Qprior(1:end-1)) ./ ...
+                           max(min(Qprior(2:end), Qprior(1:end-1)), eps);
+
+        log_jump_prev = nan(nR,1);
+        log_jump_prev(2:end) = abs(diff(log10(Qprior)));
+
+        path_Qratio = max(Qprior,[],'omitnan') / min(Qprior(Qprior > 0),[],'omitnan');
+
+        % ---------- Qest ----------
+        [q_corr, q_NSE, q_rRMSE, q_rB] = get_metrics(Q_results, ib, ip, 'vali_estmed', nR);
+
+        % ---------- interpolation products ----------
+        [sic_corr, sic_NSE, sic_rRMSE, sic_rB] = get_metrics(Q_results, ib, ip, 'vali_SIC4DVar_interp', nR);
+        [mom_corr, mom_NSE, mom_rRMSE, mom_rB] = get_metrics(Q_results, ib, ip, 'vali_MOMMA_interp', nR);
+        [met_corr, met_NSE, met_rRMSE, met_rB] = get_metrics(Q_results, ib, ip, 'vali_MetroMan_interp', nR);
+
+        interp_NSE_mat = [sic_NSE, mom_NSE, met_NSE];
+        interp_corr_mat = [sic_corr, mom_corr, met_corr];
+        interp_rRMSE_mat = [sic_rRMSE, mom_rRMSE, met_rRMSE];
+        interp_rB_mat = [sic_rB, mom_rB, met_rB];
+
+        best_interp_NSE = max(interp_NSE_mat, [], 2, 'omitnan');
+        best_interp_corr = max(interp_corr_mat, [], 2, 'omitnan');
+        best_interp_rRMSE = min(interp_rRMSE_mat, [], 2, 'omitnan');
+        best_interp_rB = min(interp_rB_mat, [], 2, 'omitnan');
+
+        q_minus_best_NSE = q_NSE - best_interp_NSE;
+        q_minus_best_corr = q_corr - best_interp_corr;
+        q_minus_best_rRMSE = q_rRMSE - best_interp_rRMSE;
+        q_minus_best_rB = q_rB - best_interp_rB;
+
+        T = table( ...
+            repmat(ib,nR,1), ...
+            repmat(ip,nR,1), ...
+            (1:nR)', ...
+            Qprior, ...
+            repmat(path_Qratio,nR,1), ...
+            jump_prev, ...
+            log_jump_prev, ...
+            q_corr, q_NSE, q_rRMSE, q_rB, ...
+            sic_corr, sic_NSE, sic_rRMSE, sic_rB, ...
+            mom_corr, mom_NSE, mom_rRMSE, mom_rB, ...
+            met_corr, met_NSE, met_rRMSE, met_rB, ...
+            best_interp_corr, best_interp_NSE, best_interp_rRMSE, best_interp_rB, ...
+            q_minus_best_corr, q_minus_best_NSE, q_minus_best_rRMSE, q_minus_best_rB, ...
+            'VariableNames', { ...
+            'ib','ip','reach','Qprior','path_Qratio','jump_prev','log_jump_prev', ...
+            'Qest_corr','Qest_NSE','Qest_rRMSE','Qest_rB', ...
+            'SIC_interp_corr','SIC_interp_NSE','SIC_interp_rRMSE','SIC_interp_rB', ...
+            'MOMMA_interp_corr','MOMMA_interp_NSE','MOMMA_interp_rRMSE','MOMMA_interp_rB', ...
+            'Metro_interp_corr','Metro_interp_NSE','Metro_interp_rRMSE','Metro_interp_rB', ...
+            'best_interp_corr','best_interp_NSE','best_interp_rRMSE','best_interp_rB', ...
+            'Qest_minus_best_corr','Qest_minus_best_NSE','Qest_minus_best_rRMSE','Qest_minus_best_rB'});
+
+        diag_rows = [diag_rows; T];
+    end
+end
+
+save('path_Qprior_vs_interp_diag.mat','diag_rows','-v7.3');
+
+
+function [corr_v, NSE_v, rRMSE_v, rB_v] = get_metrics(Q_results, ib, ip, field_name, nR)
+
+corr_v = nan(nR,1);
+NSE_v = nan(nR,1);
+rRMSE_v = nan(nR,1);
+rB_v = nan(nR,1);
+
+if numel(Q_results) < ib || ~isfield(Q_results(ib), field_name)
+    return
+end
+
+if numel(Q_results(ib).(field_name)) < ip || isempty(Q_results(ib).(field_name){ip})
+    return
+end
+
+vali = Q_results(ib).(field_name){ip};
+
+if isempty(vali)
+    return
+end
+
+if isfield(vali,'corr')
+    corr_v = unwrap_metric(vali.corr, nR);
+end
+if isfield(vali,'NSE')
+    NSE_v = unwrap_metric(vali.NSE, nR);
+end
+if isfield(vali,'rRMSE')
+    rRMSE_v = unwrap_metric(vali.rRMSE, nR);
+end
+if isfield(vali,'rB')
+    rB_v = unwrap_metric(vali.rB, nR);
+end
+
+end
+
+
+function x = unwrap_metric(v, nR)
+
+x = nan(nR,1);
+
+if isempty(v)
+    return
+end
+
+if iscell(v)
+    v = v{1};
+end
+
+v = v(:);
+n = min(nR, numel(v));
+x(1:n) = v(1:n);
+
+end
+
+%% median flow regime
 all_group_vali = init_group_vali_collect();
 
 for ib = 1:numel(data_KF_out)
