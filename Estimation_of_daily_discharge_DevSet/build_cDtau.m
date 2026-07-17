@@ -1,6 +1,6 @@
 function [data_KF_out] = build_cDtau(data_KF_out)
 % Loop through each part in data_KF_out
-for ib =  4%1:numel(data_KF_out)
+for ib =  1:numel(data_KF_out)
     % Directly work on the current part in data_KF_out
     nPaths = numel(data_KF_out(ib).paths);  % Number of paths for this part
 

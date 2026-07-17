@@ -44,6 +44,12 @@ SoS_ResultsData = read_SoS_Resultsv005(folder_path, file_prefix, sos_type);
 IRIS_file = 'IRIS_2.9.nc'; % read IRIS (SWORD 16)
 %IRIS_file = 'IRIS_3.3.nc'; % read IRIS (SWORD 17)
 basins = add_SoS_results_to_basins(basins, SoS_ResultsData, IRIS_file);
+opts.jump_threshold = 3;
+opts.max_segment_ratio = 5;
+opts.min_segment_length = 1;
+opts.allow_singleton_at_hard_break = true;
+
+[basins, split_info] = split_basins_paths_by_Qprior(basins, opts);
 use_svs = true;
 out = obs_percent(basins, use_svs);
 [k, ~] = compute_k(basins);
@@ -57,10 +63,9 @@ start_date = '2023-03-29';
 end_date = '2025-05-02';
 nt = datenum(end_date) - datenum(start_date) + 1;
 
-basins_out = add_RiverSP_ReachData_to_basins(basins_out, start_date, end_date);
-basins_out = add_RiverSP_ReachData_to_basins_with_old(basins_out, basins_out_old,start_date, end_date);
-[basins_out2, n2_before, n2_after] = rerun_riversp(basins_out, start_date, end_date);
-basins_out=basins_out2;
+% basins_out = add_RiverSP_ReachData_to_basins(basins_out, start_date, end_date);
+% [basins_out2, n2_before, n2_after] = rerun_riversp(basins_out, start_date, end_date);
+% basins_out=basins_out2;
 basinsv16_1 = basins_out(1:100);
 basinsv16_2 = basins_out(101:200);
 basinsv16_3 = basins_out(201:300);
@@ -80,6 +85,7 @@ load('basinsv16_4.mat');
 load('basinsv16_5.mat');
 load('basinsv16_6.mat');
 basins_out_old = [basinsv16_1,basinsv16_2,basinsv16_3,basinsv16_4,basinsv16_5,basinsv16_6];
+basins_out = add_RiverSP_ReachData_to_basins_with_old(basins_out, basins_out_old, start_date, end_date, true);
 
 %% Generate data for KF
 start_date = '2023-03-29'; 
@@ -94,10 +100,10 @@ data_KF_out = build_cDtau(data_KF_out);
 % Loop over each basin
 Q_results = [];
 %% Kalman filtering
-load('Phi_save.mat')
-load('Q_save.mat')
+% load('Phi_save.mat')
+% load('Q_save.mat')
 %%
-for ib =5%1:numel(data_KF_out)%1:numel(data_KF_out)
+for ib =1:numel(data_KF_out)%1:numel(data_KF_out)
     ib
     sg_basin = data_KF_out(ib);
     % Loop over each path in the basin
@@ -107,11 +113,11 @@ for ib =5%1:numel(data_KF_out)%1:numel(data_KF_out)
         nR = length(sg_path.rch_len{1});  % Number of reaches
 
         %% Build transition matrix Phi and process noise
-        % [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path, state_ep);
-        %  Phi_save{ib}{ip} =Phi_st;
-        % Q_save{ib}{ip} =Q_st ;
-        Phi_st=Phi_save{ib}{ip};
-        Q_st = Q_save{ib}{ip};
+        [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path, state_ep);
+         Phi_save{ib}{ip} =Phi_st;
+        Q_save{ib}{ip} =Q_st ;
+        % Phi_st=Phi_save{ib}{ip};
+        % Q_st = Q_save{ib}{ip};
         obs_mean = sg_path.Q_prior{1, 1}(:,1);
         xn1n1 = zeros(nR*state_ep,1);%reshape(sg_path.start_value{1,1} - obs_mean, [], 1);
         sigma0 = calc_sigma0(sg_path);
@@ -197,7 +203,7 @@ for ib =5%1:numel(data_KF_out)%1:numel(data_KF_out)
             vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
             vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
             vali_SADS_interp, vali_MetroMan_interp] = ...
-            validation3(Qest_med, sg_path, nR,use_svs);
+            validation4(Qest_med, sg_path, nR,use_svs);
         % vali_estmed.NSE
         % Q_results(263).vali_estmed{1, 1}.NSE
         % Q_results(263).vali_SIC4DVar{1, 1}.NSE

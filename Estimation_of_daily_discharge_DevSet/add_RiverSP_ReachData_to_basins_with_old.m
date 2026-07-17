@@ -1,18 +1,24 @@
-function basins = add_RiverSP_ReachData_to_basins_with_old(basins, basins_old, start_date, end_date)
+function basins = add_RiverSP_ReachData_to_basins_with_old(basins, basins_old, start_date, end_date, copy_old_only)
 % add_RiverSP_ReachData_to_basins_with_old
 % ============================================
 % 功能：
 %   在拉取 Hydrocron (SWOT_RiverSP_TimeSeries) 前，优先从 basins_old 复用已有 reach 的 ts；
 %   但如果 basins_old 对应 reach 的 ts 是空/无效，则改为调用 Hydrocron 重新拉取。
+%   copy_old_only = false: 保持上述逻辑；
+%   copy_old_only = true : 只从 basins_old 按 reach_id 复制 RiverSP，不调用 Hydrocron。
 %   在RiverSP data旁标识:index = 0: return River time seriesindex = 1: bad request, index = 2: other errors
 
 if nargin < 4
-    error('Usage: basins = add_RiverSP_ReachData_to_basins_with_old(basins, basins_old, start_date, end_date)');
+    error('Usage: basins = add_RiverSP_ReachData_to_basins_with_old(basins, basins_old, start_date, end_date, copy_old_only)');
 end
 
-% -------- 0) 从 basins_old 建立一个 reach -> ts 的索引（只收集非空 ts）--------
+if nargin < 5 || isempty(copy_old_only)
+    copy_old_only = false;
+end
+
+% -------- 0) 从 basins_old 建立一个 reach -> RiverSP pack 的索引 --------
 old_map = containers.Map('KeyType','char','ValueType','any');
-old_map = build_old_riversp_map(basins_old, old_map);
+old_map = build_old_riversp_map(basins_old, old_map, copy_old_only);
 
 % -------- 1) 新请求缓存（避免同一次运行重复撞 Hydrocron）--------
 reach_cache = containers.Map('KeyType','char','ValueType','any');
@@ -52,17 +58,23 @@ for ib =1:numel(basins)
                 continue;
             end
 
-            % -------- A) 优先复用 basins_old（但必须是“非空 ts”）--------
+            % -------- A) 优先复用 basins_old --------
             if isKey(old_map, key)
-                ts_old = old_map(key);
-                if ~is_ts_empty(ts_old)
-                    RiverSP_path{ir} = ts_old;
-                    % 写回
-                    basins(ib).RiverSP_ReachData{ip}{ir,1} = ts_old;
-                    basins(ib).RiverSP_ReachData{ip}{ir,2} = 0;
+                pack_old = old_map(key);
+                if copy_old_only || ~is_ts_empty(pack_old.ts)
+                    RiverSP_path{ir} = pack_old.ts;
+                    basins(ib).RiverSP_ReachData{ip}{ir,1} = pack_old.ts;
+                    basins(ib).RiverSP_ReachData{ip}{ir,2} = pack_old.idx;
                     continue;
                 end
                 % 如果 old 里是空，就当没缓存，继续往下走 Hydrocron
+            end
+
+            if copy_old_only
+                RiverSP_path{ir} = [];
+                basins(ib).RiverSP_ReachData{ip}{ir,1} = [];
+                basins(ib).RiverSP_ReachData{ip}{ir,2} = [];
+                continue;
             end
 
             % -------- B) 再看本次运行 cache --------
@@ -83,7 +95,7 @@ for ib =1:numel(basins)
             end
 
             % 成功/失败都缓存，避免重复撞
-            reach_cache(key) = ts;
+            reach_cache(key) = struct('ts', {ts}, 'idx', {idx});
 
             basins(ib).RiverSP_ReachData{ip}{ir,1} = ts;
             basins(ib).RiverSP_ReachData{ip}{ir,2} = idx;
@@ -94,9 +106,9 @@ end
 
 % ================= helpers =================
 
-function old_map = build_old_riversp_map(basins_old, old_map)
-% 扫描 basins_old，把 (reach_id -> ts) 放进 old_map
-% 关键：只写入“非空 ts”，空 ts 不写入（让主函数走 Hydrocron）
+function old_map = build_old_riversp_map(basins_old, old_map, include_empty)
+% 扫描 basins_old，把 (reach_id -> struct('ts', ts, 'idx', idx)) 放进 old_map
+% include_empty=false 时只写入非空 ts；include_empty=true 时尽量原样复制 old。
 
 if isempty(basins_old) || ~isstruct(basins_old)
     return;
@@ -123,7 +135,7 @@ for ib = 1:numel(basins_old)
         reach_ids_path = paths{ip};
         ts_cell = RSP{ip};
 
-        nR = min(numel(reach_ids_path), numel(ts_cell));
+        nR = min(numel(reach_ids_path), size(ts_cell, 1));
 
         for ir = 1:nR
             rid = reach_ids_path(ir);
@@ -132,16 +144,23 @@ for ib = 1:numel(basins_old)
                 continue;
             end
 
-            ts = ts_cell{ir};
+            ts = ts_cell{ir, 1};
+            idx = [];
+            if size(ts_cell, 2) >= 2
+                idx = ts_cell{ir, 2};
+            end
+            if isempty(idx) && ~is_ts_empty(ts)
+                idx = 0;
+            end
 
-            % ---- 只收集非空 ts ----
-            if is_ts_empty(ts)
+            % ---- 默认只收集非空 ts；copy_old_only 时空值也复制 ----
+            if ~include_empty && is_ts_empty(ts)
                 continue;
             end
 
             % 只要 old_map 还没有该 key，就写入（避免覆盖）
             if ~isKey(old_map, key)
-                old_map(key) = ts;
+                old_map(key) = struct('ts', {ts}, 'idx', {idx});
             end
         end
     end
