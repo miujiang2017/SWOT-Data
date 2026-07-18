@@ -204,6 +204,13 @@ if opt == 1
                 Q_tmp_true = Q{j}(2:end,2);
                 idx_valid = find(~isnan(Q_tmp_true));
                 idx_valid = idx_valid(idx_valid >= start_day_idx(j)-1);
+                idx_valid = idx_valid(idx_valid <= size(Q_est{i}, 2));
+                if ~isempty(idx_valid)
+                    q_est_tmp = Q_est{i}(j,idx_valid)';
+                    q_true_tmp = Q_tmp_true(idx_valid);
+                    finite_pair = isfinite(q_est_tmp) & isfinite(q_true_tmp);
+                    idx_valid = idx_valid(finite_pair);
+                end
 
                 if ~isempty(idx_valid)
                     % ---- 去均值版本：用于 corr / rRMSE / NSE ----

@@ -54,9 +54,9 @@ use_svs = true;
 out = obs_percent_Qprior(basins, use_svs);
 global OBS_PERCENT_QPRIOR
 OBS_PERCENT_QPRIOR = out;
-obs_unc_mode = 'qprior_group'; % 'mean_percent': Qprior*固定percent；'qprior_group': Qprior*分组percent
-obs_unc_scale = 0.7;
-[k, ~] = compute_k(basins);
+obs_unc_mode = 'mean_percent'; % 'mean_percent': Qprior*固定percent；'qprior_group': Qprior*分组percent
+obs_unc_scale = 1;
+% [k, ~] = compute_k(basins);
 %% Filter paths with gauge stations and SWOT discharge
 % option = 1: 需要有任意 SWOT Q 产品
 % option = 2: 需要有 SVS gauge
@@ -104,8 +104,8 @@ data_KF_out = build_cDtau(data_KF_out);
 % Loop over each basin
 Q_results = [];
 %% Kalman filtering
-% load('Phi_save.mat')
-% load('Q_save.mat')
+load('Phi_save.mat')
+load('Q_save.mat')
 %%
 for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
     ib
@@ -115,15 +115,48 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
         sg_path = get_path_struct(sg_basin, ip);
         % sg_path = subset_sg_path_reaches(sg_path, 35, 46);  % 只保留第 3 到第 8 个 reach
         nR = length(sg_path.rch_len{1});  % Number of reaches
+        sic_start_day_idx = local_first_sic_path_day_idx(sg_path, nR);
+        if isnan(sic_start_day_idx)
+            Qest_med = local_nan_Qest(nR, nt);
+            [vali_estmed, ...
+                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
+                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
+                vali_SADS_interp, vali_MetroMan_interp] = ...
+                validation4_sic(Qest_med, sg_path, nR,use_svs);
+            Q_results = save_Qest(Q_results, ib, ip, ...
+                Qest_med, ...
+                vali_estmed, ...
+                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
+                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
+                vali_SADS_interp, vali_MetroMan_interp);
+            continue
+        end
+        nt_run = nt - sic_start_day_idx + 1;
+        if nt_run <= state_ep
+            Qest_med = local_nan_Qest(nR, nt);
+            [vali_estmed, ...
+                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
+                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
+                vali_SADS_interp, vali_MetroMan_interp] = ...
+                validation4_sic(Qest_med, sg_path, nR,use_svs);
+            Q_results = save_Qest(Q_results, ib, ip, ...
+                Qest_med, ...
+                vali_estmed, ...
+                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
+                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
+                vali_SADS_interp, vali_MetroMan_interp);
+            continue
+        end
+        sg_path_kf = local_slice_sic_daily_cells(sg_path, sic_start_day_idx);
 
         %% Build transition matrix Phi and process noise
-        [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path, state_ep);
-         Phi_save{ib}{ip} =Phi_st;
-        Q_save{ib}{ip} =Q_st ;
-        % Phi_st=Phi_save{ib}{ip};
-        % Q_st = Q_save{ib}{ip};
+        % [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path_kf, state_ep);
+        %  Phi_save{ib}{ip} =Phi_st;
+        % Q_save{ib}{ip} =Q_st ;
+        Phi_st=Phi_save{ib}{ip};
+        Q_st = Q_save{ib}{ip};
         obs_mean = sg_path.Q_prior{1, 1}(:,1);
-        xn1n1 = zeros(nR*state_ep,1);%reshape(sg_path.start_value{1,1} - obs_mean, [], 1);
+        xn1n1 = build_sic_linear_x0(sg_path, sic_start_day_idx, state_ep);%reshape(sg_path.start_value{1,1} - obs_mean, [], 1);
         sigma0 = calc_sigma0(sg_path);
         tmp=repmat(sigma0.^2, state_ep, 1);%(sg_path.start_value{1,1}*0.18).^2;
         Pn1n1 = diag(tmp(:));
@@ -136,7 +169,7 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
         % Build the observation matrix for the current path (you will need to adjust this for each path)
         % [H, zn, R, z_idx, ~] = build_H_obs_SWOT_dA(sg_path, i, state_ep);
         % 1: SIC4DVar 2: MOMMA 3: geoBAM 4: MetroMan 5:SADS
-        [H_Q,z_Q,R_Q] = build_H_obs_SWOT_Q(sg_path,state_ep,i,1,obs_unc_mode,obs_unc_scale); %
+        [H_Q,z_Q,R_Q] = build_H_obs_SWOT_Q(sg_path_kf,state_ep,i,1,obs_unc_mode,obs_unc_scale); %
         % [H_Q2,z_Q2,R_Q2] = build_H_obs_SWOT_Q(sg_path,state_ep,i,2); %
         % [H_Q3,z_Q3,R_Q3] = build_H_obs_SWOT_Q(sg_path,state_ep,i,3); %
         % [H_Q4,z_Q4,R_Q4] = build_H_obs_SWOT_Q(sg_path,state_ep,i,4); %
@@ -165,7 +198,7 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
 
         end
         %% Other iterations
-        for i = 2:nt-state_ep
+        for i = 2:nt_run-state_ep
             % Pre-calculations for the next iteration step
             xnn1(:,i) = Phi_st * xnn{i-1};
             Pnn1{i} = (Phi_st * Pnn{i-1} * Phi_st') + Q_st;
@@ -173,7 +206,7 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
             % Build the observation matrix for the current path (you will need to adjust this for each path)
             % [H, zn, R, z_idx, ~] = build_H_obs_SWOT_dA(sg_path, i, state_ep);
             % 1: SIC4DVar 2: MOMMA 3: geoBAM
-            [H_Q,z_Q,R_Q] = build_H_obs_SWOT_Q(sg_path,state_ep,i,1,obs_unc_mode,obs_unc_scale); %
+            [H_Q,z_Q,R_Q] = build_H_obs_SWOT_Q(sg_path_kf,state_ep,i,1,obs_unc_mode,obs_unc_scale); %
             % [H_Q2,z_Q2,R_Q2] = build_H_obs_SWOT_Q(sg_path,state_ep,i,2); %
             % [H_Q3,z_Q3,R_Q3] = build_H_obs_SWOT_Q(sg_path,state_ep,i,3); %
             % [H_Q4,z_Q4,R_Q4] = build_H_obs_SWOT_Q(sg_path,state_ep,i,4); %
@@ -202,12 +235,13 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
         end
 
         %% Store results for the current path
-        [~, Qest_med] = combine_xnn_SWOT(xnn, Pnn, nR, nt, state_ep, sg_path);
+        [~, Qest_med_kf] = combine_xnn_SWOT(xnn, Pnn, nR, nt_run, state_ep, sg_path_kf);
+        Qest_med = local_pad_Qest_to_full_time(Qest_med_kf, nR, nt, sic_start_day_idx);
         [vali_estmed, ...
             vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
             vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
             vali_SADS_interp, vali_MetroMan_interp] = ...
-            validation4(Qest_med, sg_path, nR,use_svs);
+            validation4_sic(Qest_med, sg_path, nR,use_svs);
         % vali_estmed.NSE
         % Q_results(263).vali_estmed{1, 1}.NSE
         % Q_results(263).vali_SIC4DVar{1, 1}.NSE
@@ -226,7 +260,7 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
     end
 end
 %%
-load('Q_results.mat')
+%load('Q_results.mat')
 use_svs=true;
 for ib =1:numel(data_KF_out)%1:numel(data_KF_out)
     sg_basin = data_KF_out(ib);
@@ -239,7 +273,7 @@ for ib =1:numel(data_KF_out)%1:numel(data_KF_out)
             vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
             vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
             vali_SADS_interp, vali_MetroMan_interp] = ...
-            validation4_sic(Qest_med, sg_path, nR,use_svs);
+            validation4(Qest_med, sg_path, nR,use_svs);
                 Q_results = save_Qest(Q_results, ib, ip, ...
             Qest_med, ...
             vali_estmed, ...
