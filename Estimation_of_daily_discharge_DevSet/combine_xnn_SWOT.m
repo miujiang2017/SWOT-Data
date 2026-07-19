@@ -1,4 +1,15 @@
-function [Q_tmp,Qest_med] = combine_xnn_SWOT(xnn,Pnn,nR,nt,state_ep,sg_path)
+function [Q_tmp,Qest_med] = combine_xnn_SWOT(xnn,Pnn,nR,nt,state_ep,sg_path,use_rts,xnn1,Pnn1,Phi_st)
+if nargin < 7 || isempty(use_rts)
+    use_rts = false;
+end
+if use_rts
+    if nargin < 10
+        error('combine_xnn_SWOT:MissingRTSInputs', ...
+            'RTS smoother needs xnn1, Pnn1, and Phi_st.');
+    end
+    [xnn, Pnn] = local_rts_smoother(xnn, Pnn, xnn1, Pnn1, Phi_st);
+end
+
 %% Q prior as Q_true
 Q_true = sg_path.Q_prior{1, 1}(:,1);
 
@@ -40,3 +51,24 @@ end
 
 
 %
+
+end
+
+
+function [x_smooth, P_smooth] = local_rts_smoother(x_filt, P_filt, x_pred, P_pred, Phi)
+
+nT = numel(x_filt);
+x_smooth = x_filt;
+P_smooth = P_filt;
+
+if nT <= 1
+    return;
+end
+
+for k = nT-1:-1:1
+    Ck = P_filt{k} * Phi' * pinv(P_pred{k+1});
+    x_smooth{k} = x_filt{k} + Ck * (x_smooth{k+1} - x_pred(:,k+1));
+    P_smooth{k} = P_filt{k} + Ck * (P_smooth{k+1} - P_pred{k+1}) * Ck';
+end
+
+end

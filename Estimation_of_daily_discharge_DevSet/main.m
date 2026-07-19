@@ -34,7 +34,8 @@ SoS_PriorsData_v16 = read_SoS_Priorsv005(folder_path, file_prefix, 16);
 basins =  enumerate_subset_paths_by_basin(SoS_PriorsData_v16, file_prefix);
 
 % Read DevSet reach ids
-basins = add_SoS_priors_to_basins(basins, SoS_PriorsData_v16);
+discharge_interp_coord = 'center_pos'; % 'center_pos' 或 'wse_sword'
+basins = add_SoS_priors_to_basins(basins, SoS_PriorsData_v16, discharge_interp_coord);
 
 % add SVS gauge discharge
 basins = add_SVS_gauge_to_basins(basins);%v16
@@ -54,8 +55,9 @@ use_svs = true;
 out = obs_percent_Qprior(basins, use_svs);
 global OBS_PERCENT_QPRIOR
 OBS_PERCENT_QPRIOR = out;
-obs_unc_mode = 'qprior_group'; % 'mean_percent': Qprior*固定percent；'qprior_group': Qprior*分组percent
+obs_unc_mode = 'qprior_group'; % 'mean_percent': Qprior*固定percent；'qprior_group': Qprior*分组percent；'prior_range': (Qmax-Qmin)/6
 obs_unc_scale = 0.7;
+use_rts = false; % false: 只用KF；true: KF后加RTS smoother
 [k, ~] = compute_k(basins);
 %% Filter paths with gauge stations and SWOT discharge
 % option = 1: 需要有任意 SWOT Q 产品
@@ -202,7 +204,8 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
         end
 
         %% Store results for the current path
-        [~, Qest_med] = combine_xnn_SWOT(xnn, Pnn, nR, nt, state_ep, sg_path);
+        [~, Qest_med] = combine_xnn_SWOT(xnn, Pnn, nR, nt, state_ep, sg_path, ...
+            use_rts, xnn1, Pnn1, Phi_st);
         [vali_estmed, ...
             vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
             vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...

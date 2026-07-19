@@ -1,4 +1,4 @@
-function [x0, x0_mat, support] = build_sic_linear_x0(sg_path, start_day_idx, state_ep)
+function [x0, x0_mat, support] = build_sic_linear_x0(sg_path, start_day_idx, state_ep, discharge_interp_coord)
 % BUILD_SIC_LINEAR_X0
 % Build the initial KF state from SIC4DVar using linear additive anomaly.
 %
@@ -8,7 +8,7 @@ function [x0, x0_mat, support] = build_sic_linear_x0(sg_path, start_day_idx, sta
 % This function:
 %   1. takes raw SIC4DVar values in start_day_idx : start_day_idx+state_ep-1;
 %   2. converts them to additive anomaly: Q_SIC4DVar - Qprior;
-%   3. interpolates each day along reach center position;
+%   3. interpolates each day along the selected discharge interpolation coordinate;
 %   4. interpolates each reach temporally across the state_ep window;
 %   5. fills unsupported entries with zero anomaly.
 %
@@ -17,6 +17,10 @@ function [x0, x0_mat, support] = build_sic_linear_x0(sg_path, start_day_idx, sta
 %   x0_mat  : nR x state_ep matrix
 %   support : nR x state_ep integer mask
 %             0 missing/fallback to prior, 1 raw SIC, 2 spatial, 3 temporal
+
+if nargin < 4 || isempty(discharge_interp_coord)
+    discharge_interp_coord = 'center_pos';
+end
 
 Qprior = sg_path.Q_prior{1, 1}(:, 1);
 nR = numel(Qprior);
@@ -39,12 +43,7 @@ if isempty(Qsic) || ~iscell(Qsic)
     return
 end
 
-if isfield(sg_path, 'center_pos') && ~isempty(sg_path.center_pos) && ...
-        ~isempty(sg_path.center_pos{1})
-    center_pos = sg_path.center_pos{1}(:);
-else
-    center_pos = (1:nR).';
-end
+spatial_coord = local_get_discharge_interp_coord(sg_path, nR, discharge_interp_coord);
 
 n_days = size(Qsic, 2);
 day_idx = start_day_idx : min(start_day_idx + state_ep - 1, n_days);
@@ -77,10 +76,10 @@ end
 spatial_anom = raw_anom;
 for kk = 1:state_ep
     y = raw_anom(:, kk);
-    valid = isfinite(y) & isfinite(center_pos);
+    valid = isfinite(y) & isfinite(spatial_coord);
 
     if sum(valid) >= 2
-        yq = local_interp_by_position(center_pos(valid), y(valid), center_pos);
+        yq = local_interp_by_position(spatial_coord(valid), y(valid), spatial_coord);
         fill_idx = ~isfinite(spatial_anom(:, kk)) & isfinite(yq);
         spatial_anom(fill_idx, kk) = yq(fill_idx);
         support(fill_idx, kk) = 2;
@@ -113,6 +112,42 @@ end
 % Unsupported entries fall back to zero anomaly, i.e. Qprior.
 x0_mat(~isfinite(x0_mat)) = 0;
 x0 = reshape(x0_mat, [], 1);
+
+end
+
+
+function coord = local_get_discharge_interp_coord(sg_path, nR, discharge_interp_coord)
+
+coord = [];
+
+if strcmpi(string(discharge_interp_coord), "wse_sword") && ...
+        isfield(sg_path, 'wse_sword') && ~isempty(sg_path.wse_sword) && ...
+        iscell(sg_path.wse_sword) && ~isempty(sg_path.wse_sword{1})
+    wse = sg_path.wse_sword{1}(:);
+    if numel(wse) == nR
+        valid = isfinite(wse);
+        if numel(unique(wse(valid))) >= 2
+            coord = wse;
+        end
+    end
+end
+
+if ~strcmpi(string(discharge_interp_coord), "center_pos") && ...
+        ~strcmpi(string(discharge_interp_coord), "wse_sword")
+    error('Unknown discharge_interp_coord: %s. Use center_pos or wse_sword.', string(discharge_interp_coord));
+end
+
+if isempty(coord) && isfield(sg_path, 'center_pos') && ~isempty(sg_path.center_pos) && ...
+        iscell(sg_path.center_pos) && ~isempty(sg_path.center_pos{1})
+    center_pos = sg_path.center_pos{1}(:);
+    if numel(center_pos) == nR
+        coord = center_pos;
+    end
+end
+
+if isempty(coord)
+    coord = (1:nR).';
+end
 
 end
 

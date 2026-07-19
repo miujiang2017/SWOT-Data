@@ -29,11 +29,11 @@ for ib =  1:numel(data_KF_out)
         % Extract necessary data for this path
         w_sword = data_KF_out(ib).w_sword{ip};  % Width for this path
         s_sword = data_KF_out(ib).s_sword{ip};  % Width for this path
-        if ~isempty(data_KF_out(ib).s_IRIS)
-            s_IRIS = data_KF_out(ib).s_IRIS{ip};  % Slope for this path
-        else
-            s_IRIS = nan;
-        end
+        % if ~isempty(data_KF_out(ib).s_IRIS)
+        %     s_IRIS = data_KF_out(ib).s_IRIS{ip};  % Slope for this path
+        % else
+        %     s_IRIS = nan;
+        % end
         Q_prior = data_KF_out(ib).Q_prior{ip};  % Mean discharge for this path
         center_pos = data_KF_out(ib).center_pos{ip};  % Center position for this path
         W = data_KF_out(ib).width_RiverSP{ip};  % Mean discharge for this path
@@ -224,11 +224,26 @@ for ib =  1:numel(data_KF_out)
                 valid_indices = ~isnan(tau);
 
                 if sum(valid_indices) >= 2  % 如果有效数据大于或等于 2，则使用线性插值
-                    % 使用线性插值进行补充
-                    tau(i) = interp1(center_pos(valid_indices), tau(valid_indices), center_pos(i), 'linear', 'extrap');
+                    % 先做线性插值（不外插），区间外会返回 NaN
+                    tau_lin = interp1(center_pos(valid_indices), ...
+                        tau(valid_indices), ...
+                        center_pos(i), ...
+                        'linear');
+                    if isnan(tau_lin)
+                        % 需要外插的地方：用最近邻
+                        tau(i) = interp1(center_pos(valid_indices), ...
+                            tau(valid_indices), ...
+                            center_pos(i), ...
+                            'nearest','extrap');
+                    else
+                        % 区间内：用线性插值
+                        tau(i) = tau_lin;
+                    end
                 else
                     % 如果有效数据不足 2，则使用最近邻插值
-                    tau(i) = tau(valid_indices);
+                    if any(valid_indices)
+                        tau(i) = tau(valid_indices);
+                    end
                 end
             end
         end
