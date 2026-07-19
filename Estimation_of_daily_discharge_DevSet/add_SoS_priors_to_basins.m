@@ -1,8 +1,12 @@
-function basins = add_SoS_priors_to_basins(basins, SoS_PriorsData)
+function basins = add_SoS_priors_to_basins(basins, SoS_PriorsData, discharge_interp_coord)
 % 将 SoS_PriorsData 映射到 basins：
 % - mean_q_subset : 与 subset 对齐的 cell
 % - USGS/WSC/MEFCCWP : 与 paths 同尺寸；每个 path 是 R×1 cell；每格为 [T×2]=[qt,q] 或 []
-% - mean_q_intpl : 与 paths 对齐的数值向量（按 position 线性插值并外推，保证无 NaN）
+% - mean_q_intpl : 与 paths 对齐的数值向量（按指定空间坐标插值并外推，保证无 NaN）
+
+if nargin < 3 || isempty(discharge_interp_coord)
+    discharge_interp_coord = 'center_pos';
+end
 
 if isempty(basins) || isempty(SoS_PriorsData), return; end
 
@@ -60,7 +64,7 @@ for b = 1:numel(basins)
     basins(b).WSC     = squash_cell_if_all_empty(basins(b).WSC);
     basins(b).MEFCCWP = squash_cell_if_all_empty(basins(b).MEFCCWP);
 
-    %% 3) mean_q_intpl：按 position 插值 + 外推，保证无 NaN
+    %% 3) mean_q_intpl：按指定空间坐标插值 + 外推，保证无 NaN
     % 3.1 subset → 标量 mean_q（每 reach 一个）
     mq_scalar = nan(K,1);
     for k = 1:K
@@ -102,6 +106,8 @@ for b = 1:numel(basins)
             error('basins(%d).paths{%d} 与 position{%d} 长度不一致。', b, p, p);
         end
 
+        interp_coord = get_discharge_interp_coord(basins(b), p, R, pos, discharge_interp_coord);
+
         % Map 到当前 path：mean_q / min_q / max_q（先全 NaN）
         mq_path     = nan(R,1);
         min_q_path  = nan(R,1);
@@ -139,13 +145,13 @@ for b = 1:numel(basins)
         max_q_path(max_q_path < 1) = NaN;
 
         % 已知点（决定 flag）
-        known = ~isnan(mq_path) & ~isnan(pos);
+        known = ~isnan(mq_path) & ~isnan(interp_coord);
         flag  = double(known);
 
         % 插值 + 外推（避免 NaN）
-        yi_mq     = safe_interp_no_nan(pos, mq_path,    basin_fallback);
-        yi_min_q  = safe_interp_no_nan(pos, min_q_path, basin_fallback);
-        yi_max_q  = safe_interp_no_nan(pos, max_q_path, basin_fallback);
+        yi_mq     = safe_interp_no_nan(interp_coord, mq_path,    basin_fallback);
+        yi_min_q  = safe_interp_no_nan(interp_coord, min_q_path, basin_fallback);
+        yi_max_q  = safe_interp_no_nan(interp_coord, max_q_path, basin_fallback);
 
         basins(b).mean_q_intpl{p} = [yi_mq,    flag];
         basins(b).min_q_intpl{p}  = [yi_min_q, flag];
@@ -231,7 +237,7 @@ end
 
 % —— 关键：安全插值 + 外推，保证输出无 NaN ——
 function yi = safe_interp_no_nan(x, y, fallback_val)
-% x: position (R×1), y: values with NaN (R×1)
+% x: interpolation coordinate (R×1), y: values with NaN (R×1)
 R = numel(x);
 xi = x(:); yi = y(:);
 
@@ -248,7 +254,7 @@ elseif nnz(known) == 1
     return;
 end
 
-% 排序并处理重复位置（对重复 x 取均值）
+% 排序并处理重复坐标（对重复 x 取均值）
 [xs, ord] = sort(xi, 'ascend');
 ys = yi(ord);
 ks = ~isnan(ys) & ~isnan(xs);
@@ -276,6 +282,32 @@ mask = isnan(yi);
 if any(mask)
     yi(mask) = fallback_val;
 end
+end
+
+
+function coord = get_discharge_interp_coord(basin, p, R, pos, discharge_interp_coord)
+
+coord = pos(:);
+
+if strcmpi(string(discharge_interp_coord), "center_pos")
+    return;
+elseif ~strcmpi(string(discharge_interp_coord), "wse_sword")
+    error('Unknown discharge_interp_coord: %s. Use center_pos or wse_sword.', string(discharge_interp_coord));
+end
+
+if ~isfield(basin, 'wse_sword') || numel(basin.wse_sword) < p || isempty(basin.wse_sword{p})
+    return;
+end
+
+wse = to_double_vec(basin.wse_sword{p});
+if numel(wse) == R
+    wse = wse(:);
+    valid = isfinite(wse);
+    if numel(unique(wse(valid))) >= 2
+        coord = wse;
+    end
+end
+
 end
 
 

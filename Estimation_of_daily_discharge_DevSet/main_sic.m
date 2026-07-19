@@ -34,7 +34,8 @@ SoS_PriorsData_v16 = read_SoS_Priorsv005(folder_path, file_prefix, 16);
 basins =  enumerate_subset_paths_by_basin(SoS_PriorsData_v16, file_prefix);
 
 % Read DevSet reach ids
-basins = add_SoS_priors_to_basins(basins, SoS_PriorsData_v16);
+discharge_interp_coord = 'wse_sword'; % 'center_pos' 或 'wse_sword'
+basins = add_SoS_priors_to_basins(basins, SoS_PriorsData_v16, discharge_interp_coord);
 
 % add SVS gauge discharge
 basins = add_SVS_gauge_to_basins(basins);%v16
@@ -51,12 +52,7 @@ opts.allow_singleton_at_hard_break = true;
 
 [basins, split_info] = split_basins_paths_by_Qprior(basins, opts);
 use_svs = true;
-out = obs_percent_Qprior(basins, use_svs);
-global OBS_PERCENT_QPRIOR
-OBS_PERCENT_QPRIOR = out;
-obs_unc_mode = 'mean_percent'; % 'mean_percent': Qprior*固定percent；'qprior_group': Qprior*分组percent
-obs_unc_scale = 1;
-% [k, ~] = compute_k(basins);
+%[k, ~] = compute_k(basins);
 %% Filter paths with gauge stations and SWOT discharge
 % option = 1: 需要有任意 SWOT Q 产品
 % option = 2: 需要有 SVS gauge
@@ -104,14 +100,20 @@ data_KF_out = build_cDtau(data_KF_out);
 % Loop over each basin
 Q_results = [];
 %% Kalman filtering
-load('Phi_save.mat')
-load('Q_save.mat')
+% load('Phi_save.mat')
+% load('Q_save.mat')
+out = obs_percent_Qprior(basins, use_svs);
+global OBS_PERCENT_QPRIOR
+OBS_PERCENT_QPRIOR = out;
+obs_unc_mode = 'mean_percent'; % 'mean_percent': Qprior*固定percent；'qprior_group': Qprior*分组percent；'prior_range': (Qmax-Qmin)/6
+obs_unc_scale = 1;
+use_rts = true; % false: 只用KF；true: KF后加RTS smoother
 %%
-for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
+for ib =1:numel(data_KF_out)%1:numel(data_KF_out)
     ib
     sg_basin = data_KF_out(ib);
     % Loop over each path in the basin
-    for ip = 1%:numel(sg_basin.paths)
+    for ip = 1:numel(sg_basin.paths)
         sg_path = get_path_struct(sg_basin, ip);
         % sg_path = subset_sg_path_reaches(sg_path, 35, 46);  % 只保留第 3 到第 8 个 reach
         nR = length(sg_path.rch_len{1});  % Number of reaches
@@ -150,13 +152,13 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
         sg_path_kf = local_slice_sic_daily_cells(sg_path, sic_start_day_idx);
 
         %% Build transition matrix Phi and process noise
-        % [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path_kf, state_ep);
-        %  Phi_save{ib}{ip} =Phi_st;
-        % Q_save{ib}{ip} =Q_st ;
-        Phi_st=Phi_save{ib}{ip};
-        Q_st = Q_save{ib}{ip};
+        [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path_kf, state_ep);
+         Phi_save{ib}{ip} =Phi_st;
+        Q_save{ib}{ip} =Q_st ;
+        % Phi_st=Phi_save{ib}{ip};
+        % Q_st = Q_save{ib}{ip};
         obs_mean = sg_path.Q_prior{1, 1}(:,1);
-        xn1n1 = build_sic_linear_x0(sg_path, sic_start_day_idx, state_ep);%reshape(sg_path.start_value{1,1} - obs_mean, [], 1);
+        xn1n1 = build_sic_linear_x0(sg_path, sic_start_day_idx, state_ep, discharge_interp_coord);%reshape(sg_path.start_value{1,1} - obs_mean, [], 1);
         sigma0 = calc_sigma0(sg_path);
         tmp=repmat(sigma0.^2, state_ep, 1);%(sg_path.start_value{1,1}*0.18).^2;
         Pn1n1 = diag(tmp(:));
@@ -235,7 +237,8 @@ for ib =1:6%numel(data_KF_out)%1:numel(data_KF_out)
         end
 
         %% Store results for the current path
-        [~, Qest_med_kf] = combine_xnn_SWOT(xnn, Pnn, nR, nt_run, state_ep, sg_path_kf);
+        [~, Qest_med_kf] = combine_xnn_SWOT(xnn, Pnn, nR, nt_run, state_ep, sg_path_kf, ...
+            use_rts, xnn1, Pnn1, Phi_st);
         Qest_med = local_pad_Qest_to_full_time(Qest_med_kf, nR, nt, sic_start_day_idx);
         [vali_estmed, ...
             vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
@@ -292,86 +295,96 @@ plot_reaches_on_map(data_KF_out, file_prefix)
 plot_metric_improvement_boxchart(Q_results)
 
 %%
-diag_rows = table();
+basins0 = enumerate_subset_paths_by_basin(SoS_PriorsData_v16, file_prefix);
 
-for ib = 1:numel(data_KF_out)
-    sg_basin = data_KF_out(ib);
+basins_center = add_SoS_priors_to_basins(basins0, SoS_PriorsData_v16, 'center_pos');
+basins_center = add_SVS_gauge_to_basins(basins_center);
 
-    if ~isfield(sg_basin,'paths') || isempty(sg_basin.paths)
-        continue
-    end
+basins_wse = add_SoS_priors_to_basins(basins0, SoS_PriorsData_v16, 'wse_sword');
+basins_wse = add_SVS_gauge_to_basins(basins_wse);
 
-    for ip = 1:numel(sg_basin.paths)
-
-        sg_path = get_path_struct(sg_basin, ip);
-
-        if ~isfield(sg_path,'Q_prior') || isempty(sg_path.Q_prior) || isempty(sg_path.Q_prior{1})
-            continue
-        end
-
-        Qprior = sg_path.Q_prior{1}(:,1);
-        nR = numel(Qprior);
-
-        jump_prev = nan(nR,1);
-        jump_prev(2:end) = max(Qprior(2:end), Qprior(1:end-1)) ./ ...
-                           max(min(Qprior(2:end), Qprior(1:end-1)), eps);
-
-        log_jump_prev = nan(nR,1);
-        log_jump_prev(2:end) = abs(diff(log10(Qprior)));
-
-        path_Qratio = max(Qprior,[],'omitnan') / min(Qprior(Qprior > 0),[],'omitnan');
-
-        % ---------- Qest ----------
-        [q_corr, q_NSE, q_rRMSE, q_rB] = get_metrics(Q_results, ib, ip, 'vali_estmed', nR);
-
-        % ---------- interpolation products ----------
-        [sic_corr, sic_NSE, sic_rRMSE, sic_rB] = get_metrics(Q_results, ib, ip, 'vali_SIC4DVar_interp', nR);
-        [mom_corr, mom_NSE, mom_rRMSE, mom_rB] = get_metrics(Q_results, ib, ip, 'vali_MOMMA_interp', nR);
-        [met_corr, met_NSE, met_rRMSE, met_rB] = get_metrics(Q_results, ib, ip, 'vali_MetroMan_interp', nR);
-
-        interp_NSE_mat = [sic_NSE, mom_NSE, met_NSE];
-        interp_corr_mat = [sic_corr, mom_corr, met_corr];
-        interp_rRMSE_mat = [sic_rRMSE, mom_rRMSE, met_rRMSE];
-        interp_rB_mat = [sic_rB, mom_rB, met_rB];
-
-        best_interp_NSE = max(interp_NSE_mat, [], 2, 'omitnan');
-        best_interp_corr = max(interp_corr_mat, [], 2, 'omitnan');
-        best_interp_rRMSE = min(interp_rRMSE_mat, [], 2, 'omitnan');
-        best_interp_rB = min(interp_rB_mat, [], 2, 'omitnan');
-
-        q_minus_best_NSE = q_NSE - best_interp_NSE;
-        q_minus_best_corr = q_corr - best_interp_corr;
-        q_minus_best_rRMSE = q_rRMSE - best_interp_rRMSE;
-        q_minus_best_rB = q_rB - best_interp_rB;
-
-        T = table( ...
-            repmat(ib,nR,1), ...
-            repmat(ip,nR,1), ...
-            (1:nR)', ...
-            Qprior, ...
-            repmat(path_Qratio,nR,1), ...
-            jump_prev, ...
-            log_jump_prev, ...
-            q_corr, q_NSE, q_rRMSE, q_rB, ...
-            sic_corr, sic_NSE, sic_rRMSE, sic_rB, ...
-            mom_corr, mom_NSE, mom_rRMSE, mom_rB, ...
-            met_corr, met_NSE, met_rRMSE, met_rB, ...
-            best_interp_corr, best_interp_NSE, best_interp_rRMSE, best_interp_rB, ...
-            q_minus_best_corr, q_minus_best_NSE, q_minus_best_rRMSE, q_minus_best_rB, ...
-            'VariableNames', { ...
-            'ib','ip','reach','Qprior','path_Qratio','jump_prev','log_jump_prev', ...
-            'Qest_corr','Qest_NSE','Qest_rRMSE','Qest_rB', ...
-            'SIC_interp_corr','SIC_interp_NSE','SIC_interp_rRMSE','SIC_interp_rB', ...
-            'MOMMA_interp_corr','MOMMA_interp_NSE','MOMMA_interp_rRMSE','MOMMA_interp_rB', ...
-            'Metro_interp_corr','Metro_interp_NSE','Metro_interp_rRMSE','Metro_interp_rB', ...
-            'best_interp_corr','best_interp_NSE','best_interp_rRMSE','best_interp_rB', ...
-            'Qest_minus_best_corr','Qest_minus_best_NSE','Qest_minus_best_rRMSE','Qest_minus_best_rB'});
-
-        diag_rows = [diag_rows; T];
-    end
-end
-
-save('path_Qprior_vs_interp_diag.mat','diag_rows','-v7.3');
+out_prior_diag = compare_qprior_interp_methods_with_svs(basins_center, basins_wse);
+%%
+% diag_rows = table();
+% 
+% for ib = 1:numel(data_KF_out)
+%     sg_basin = data_KF_out(ib);
+% 
+%     if ~isfield(sg_basin,'paths') || isempty(sg_basin.paths)
+%         continue
+%     end
+% 
+%     for ip = 1:numel(sg_basin.paths)
+% 
+%         sg_path = get_path_struct(sg_basin, ip);
+% 
+%         if ~isfield(sg_path,'Q_prior') || isempty(sg_path.Q_prior) || isempty(sg_path.Q_prior{1})
+%             continue
+%         end
+% 
+%         Qprior = sg_path.Q_prior{1}(:,1);
+%         nR = numel(Qprior);
+% 
+%         jump_prev = nan(nR,1);
+%         jump_prev(2:end) = max(Qprior(2:end), Qprior(1:end-1)) ./ ...
+%                            max(min(Qprior(2:end), Qprior(1:end-1)), eps);
+% 
+%         log_jump_prev = nan(nR,1);
+%         log_jump_prev(2:end) = abs(diff(log10(Qprior)));
+% 
+%         path_Qratio = max(Qprior,[],'omitnan') / min(Qprior(Qprior > 0),[],'omitnan');
+% 
+%         % ---------- Qest ----------
+%         [q_corr, q_NSE, q_rRMSE, q_rB] = get_metrics(Q_results, ib, ip, 'vali_estmed', nR);
+% 
+%         % ---------- interpolation products ----------
+%         [sic_corr, sic_NSE, sic_rRMSE, sic_rB] = get_metrics(Q_results, ib, ip, 'vali_SIC4DVar_interp', nR);
+%         [mom_corr, mom_NSE, mom_rRMSE, mom_rB] = get_metrics(Q_results, ib, ip, 'vali_MOMMA_interp', nR);
+%         [met_corr, met_NSE, met_rRMSE, met_rB] = get_metrics(Q_results, ib, ip, 'vali_MetroMan_interp', nR);
+% 
+%         interp_NSE_mat = [sic_NSE, mom_NSE, met_NSE];
+%         interp_corr_mat = [sic_corr, mom_corr, met_corr];
+%         interp_rRMSE_mat = [sic_rRMSE, mom_rRMSE, met_rRMSE];
+%         interp_rB_mat = [sic_rB, mom_rB, met_rB];
+% 
+%         best_interp_NSE = max(interp_NSE_mat, [], 2, 'omitnan');
+%         best_interp_corr = max(interp_corr_mat, [], 2, 'omitnan');
+%         best_interp_rRMSE = min(interp_rRMSE_mat, [], 2, 'omitnan');
+%         best_interp_rB = min(interp_rB_mat, [], 2, 'omitnan');
+% 
+%         q_minus_best_NSE = q_NSE - best_interp_NSE;
+%         q_minus_best_corr = q_corr - best_interp_corr;
+%         q_minus_best_rRMSE = q_rRMSE - best_interp_rRMSE;
+%         q_minus_best_rB = q_rB - best_interp_rB;
+% 
+%         T = table( ...
+%             repmat(ib,nR,1), ...
+%             repmat(ip,nR,1), ...
+%             (1:nR)', ...
+%             Qprior, ...
+%             repmat(path_Qratio,nR,1), ...
+%             jump_prev, ...
+%             log_jump_prev, ...
+%             q_corr, q_NSE, q_rRMSE, q_rB, ...
+%             sic_corr, sic_NSE, sic_rRMSE, sic_rB, ...
+%             mom_corr, mom_NSE, mom_rRMSE, mom_rB, ...
+%             met_corr, met_NSE, met_rRMSE, met_rB, ...
+%             best_interp_corr, best_interp_NSE, best_interp_rRMSE, best_interp_rB, ...
+%             q_minus_best_corr, q_minus_best_NSE, q_minus_best_rRMSE, q_minus_best_rB, ...
+%             'VariableNames', { ...
+%             'ib','ip','reach','Qprior','path_Qratio','jump_prev','log_jump_prev', ...
+%             'Qest_corr','Qest_NSE','Qest_rRMSE','Qest_rB', ...
+%             'SIC_interp_corr','SIC_interp_NSE','SIC_interp_rRMSE','SIC_interp_rB', ...
+%             'MOMMA_interp_corr','MOMMA_interp_NSE','MOMMA_interp_rRMSE','MOMMA_interp_rB', ...
+%             'Metro_interp_corr','Metro_interp_NSE','Metro_interp_rRMSE','Metro_interp_rB', ...
+%             'best_interp_corr','best_interp_NSE','best_interp_rRMSE','best_interp_rB', ...
+%             'Qest_minus_best_corr','Qest_minus_best_NSE','Qest_minus_best_rRMSE','Qest_minus_best_rB'});
+% 
+%         diag_rows = [diag_rows; T];
+%     end
+% end
+% 
+% save('path_Qprior_vs_interp_diag.mat','diag_rows','-v7.3');
 
 
 function [corr_v, NSE_v, rRMSE_v, rB_v] = get_metrics(Q_results, ib, ip, field_name, nR)
@@ -430,109 +443,109 @@ x(1:n) = v(1:n);
 end
 
 %% median flow regime
-all_group_vali = init_group_vali_collect();
-
-for ib = 1:numel(data_KF_out)
-
-    ib
-    sg_basin = data_KF_out(ib);
-
-    for ip = 1:numel(sg_basin.paths)
-
-        sg_path = get_path_struct(sg_basin, ip);
-        nR = length(sg_path.rch_len{1});
-
-        Qest_med = Q_results(ib).Qest_med{1, ip};
-
-        group_vali_path = validation_flow_groups( ...
-            Qest_med, sg_path, nR, use_svs);
-
-        all_group_vali = append_group_vali_collect( ...
-            all_group_vali, group_vali_path);
-
-    end
-end
-
-group_median = calc_group_vali_median(all_group_vali);
-
-disp(group_median)
+% all_group_vali = init_group_vali_collect();
+% 
+% for ib = 1:numel(data_KF_out)
+% 
+%     ib
+%     sg_basin = data_KF_out(ib);
+% 
+%     for ip = 1:numel(sg_basin.paths)
+% 
+%         sg_path = get_path_struct(sg_basin, ip);
+%         nR = length(sg_path.rch_len{1});
+% 
+%         Qest_med = Q_results(ib).Qest_med{1, ip};
+% 
+%         group_vali_path = validation_flow_groups( ...
+%             Qest_med, sg_path, nR, use_svs);
+% 
+%         all_group_vali = append_group_vali_collect( ...
+%             all_group_vali, group_vali_path);
+% 
+%     end
+% end
+% 
+% group_median = calc_group_vali_median(all_group_vali);
+% 
+% disp(group_median)
 %% 
-max_nse = -inf;
-best_ib = NaN;
-best_ip = NaN;
-best_r  = NaN;
-
-for ib = 350:398%numel(Q_results)%257%numel(Q_results)
-
-    if isempty(Q_results(ib).vali_estmed)
-        continue
-    end
-
-    for ip = 1:numel(Q_results(ib).vali_estmed)
-
-        vali = Q_results(ib).vali_estmed{ip};
-
-        if isempty(vali) || ~isfield(vali, 'NSE') || isempty(vali.NSE)
-            continue
-        end
-
-        nse = vali.NSE;
-
-        [local_max, r] = max(nse);
-
-        if local_max > max_nse
-            max_nse = local_max;
-            best_ib = ib;
-            best_ip = ip;
-            best_r  = r;
-        end
-
-    end
-end
-
-fprintf('Max NSE = %.3f (basin %d, path %d, reach %d)\n', ...
-    max_nse, best_ib, best_ip, best_r);
-
-%% gauge max time
-all_vals = [];
-
-for ib = 1:numel(data_KF_out)
-
-    if isempty(data_KF_out(ib).Gauge_Q)
-        continue
-    end
-
-    for ip = 1:numel(data_KF_out(ib).Gauge_Q)
-
-        G = data_KF_out(ib).Gauge_Q{ip};
-
-
-for r = 1:numel(G)
-
-    ts = G{r};
-
-    if isempty(ts)
-        continue
-    end
-
-    q = ts(:,2);          % discharge
-    tg= ts(:,1);          % time
-    tg = max(tg(~isnan(q)));     % remove NaN
-
-    all_vals = [all_vals; tg];
-
-end
-
-    end
-end
+% max_nse = -inf;
+% best_ib = NaN;
+% best_ip = NaN;
+% best_r  = NaN;
+% 
+% for ib = 350:398%numel(Q_results)%257%numel(Q_results)
+% 
+%     if isempty(Q_results(ib).vali_estmed)
+%         continue
+%     end
+% 
+%     for ip = 1:numel(Q_results(ib).vali_estmed)
+% 
+%         vali = Q_results(ib).vali_estmed{ip};
+% 
+%         if isempty(vali) || ~isfield(vali, 'NSE') || isempty(vali.NSE)
+%             continue
+%         end
+% 
+%         nse = vali.NSE;
+% 
+%         [local_max, r] = max(nse);
+% 
+%         if local_max > max_nse
+%             max_nse = local_max;
+%             best_ib = ib;
+%             best_ip = ip;
+%             best_r  = r;
+%         end
+% 
+%     end
+% end
+% 
+% fprintf('Max NSE = %.3f (basin %d, path %d, reach %d)\n', ...
+%     max_nse, best_ib, best_ip, best_r);
+% 
+% %% gauge max time
+% all_vals = [];
+% 
+% for ib = 1:numel(data_KF_out)
+% 
+%     if isempty(data_KF_out(ib).Gauge_Q)
+%         continue
+%     end
+% 
+%     for ip = 1:numel(data_KF_out(ib).Gauge_Q)
+% 
+%         G = data_KF_out(ib).Gauge_Q{ip};
+% 
+% 
+% for r = 1:numel(G)
+% 
+%     ts = G{r};
+% 
+%     if isempty(ts)
+%         continue
+%     end
+% 
+%     q = ts(:,2);          % discharge
+%     tg= ts(:,1);          % time
+%     tg = max(tg(~isnan(q)));     % remove NaN
+% 
+%     all_vals = [all_vals; tg];
+% 
+% end
+% 
+%     end
+% end
 
 % 去重
-[unique_vals,~,ic] = unique(all_vals);
-counts = accumarray(idx,1);
-reference_date = datetime(2000, 1, 1, 0, 0, 0);
-dates = reference_date + seconds(unique_vals);
-fprintf('Total non-NaN values: %d\n', numel(all_vals));
-fprintf('Unique values: %d\n', (unique_vals));
+% [unique_vals,~,ic] = unique(all_vals);
+% counts = accumarray(idx,1);
+% reference_date = datetime(2000, 1, 1, 0, 0, 0);
+% dates = reference_date + seconds(unique_vals);
+% fprintf('Total non-NaN values: %d\n', numel(all_vals));
+% fprintf('Unique values: %d\n', (unique_vals));
 %%
 function sg_path = get_path_struct(basin, ip)
 % GET_PATH_STRUCT  从 data_KF_out(ib) 中提取第 ip 条 path 的子结构
@@ -614,71 +627,71 @@ end
 
 
 %%
-reference_date = datetime(2000,1,1,0,0,0,'TimeZone','UTC');
-
-all = SoS_ResultsData{3, 2}.Q_MOMMA(:,1);
-for i = 1: length(all)
-    dates(:,i)  = reference_date + seconds(all(i));
-end
+% reference_date = datetime(2000,1,1,0,0,0,'TimeZone','UTC');
+% 
+% all = SoS_ResultsData{3, 2}.Q_MOMMA(:,1);
+% for i = 1: length(all)
+%     dates(:,i)  = reference_date + seconds(all(i));
+% end
 
 %% Compare reach IDs in paths between basins_out and basins_out_old
 % Compare reach IDs in paths between basins_out and basins_out_old
 
-all_same = true;
-
-for i = 1:numel(basins_out)
-
-    basin_id_new = basins_out(i).basin_id;
-    basin_id_old = basins_out_old(i).basin_id;
-
-    if ~isequaln(basin_id_new, basin_id_old)
-        all_same = false;
-        fprintf('Basin index %d has different basin_id: new = %s, old = %s\n', ...
-            i, string(basin_id_new), string(basin_id_old));
-        continue
-    end
-
-    n_path_new = numel(basins_out(i).paths);
-    n_path_old = numel(basins_out_old(i).paths);
-
-    if n_path_new ~= n_path_old
-        all_same = false;
-        fprintf('Basin %s has different number of paths: new = %d, old = %d\n', ...
-            string(basin_id_new), n_path_new, n_path_old);
-    end
-
-    n_path = min(n_path_new, n_path_old);
-
-    for p = 1:n_path
-
-        reach_new = basins_out(i).paths{p};
-        reach_old = basins_out_old(i).paths{p};
-
-        if ~isequaln(reach_new, reach_old)
-            all_same = false;
-
-            fprintf('\nDifferent path found:\n');
-            fprintf('Basin index: %d\n', i);
-            fprintf('Basin ID: %s\n', string(basin_id_new));
-            fprintf('Path index: %d\n', p);
-
-            fprintf('New path reach IDs size: %s\n', mat2str(size(reach_new)));
-            fprintf('Old path reach IDs size: %s\n', mat2str(size(reach_old)));
-
-            fprintf('New reach IDs:\n');
-            disp(reach_new)
-
-            fprintf('Old reach IDs:\n');
-            disp(reach_old)
-        end
-    end
-end
-
-if all_same
-    disp('All path reach IDs are the same.');
-else
-    disp('Some path reach IDs are different.');
-end
+% all_same = true;
+% 
+% for i = 1:numel(basins_out)
+% 
+%     basin_id_new = basins_out(i).basin_id;
+%     basin_id_old = basins_out_old(i).basin_id;
+% 
+%     if ~isequaln(basin_id_new, basin_id_old)
+%         all_same = false;
+%         fprintf('Basin index %d has different basin_id: new = %s, old = %s\n', ...
+%             i, string(basin_id_new), string(basin_id_old));
+%         continue
+%     end
+% 
+%     n_path_new = numel(basins_out(i).paths);
+%     n_path_old = numel(basins_out_old(i).paths);
+% 
+%     if n_path_new ~= n_path_old
+%         all_same = false;
+%         fprintf('Basin %s has different number of paths: new = %d, old = %d\n', ...
+%             string(basin_id_new), n_path_new, n_path_old);
+%     end
+% 
+%     n_path = min(n_path_new, n_path_old);
+% 
+%     for p = 1:n_path
+% 
+%         reach_new = basins_out(i).paths{p};
+%         reach_old = basins_out_old(i).paths{p};
+% 
+%         if ~isequaln(reach_new, reach_old)
+%             all_same = false;
+% 
+%             fprintf('\nDifferent path found:\n');
+%             fprintf('Basin index: %d\n', i);
+%             fprintf('Basin ID: %s\n', string(basin_id_new));
+%             fprintf('Path index: %d\n', p);
+% 
+%             fprintf('New path reach IDs size: %s\n', mat2str(size(reach_new)));
+%             fprintf('Old path reach IDs size: %s\n', mat2str(size(reach_old)));
+% 
+%             fprintf('New reach IDs:\n');
+%             disp(reach_new)
+% 
+%             fprintf('Old reach IDs:\n');
+%             disp(reach_old)
+%         end
+%     end
+% end
+% 
+% if all_same
+%     disp('All path reach IDs are the same.');
+% else
+%     disp('Some path reach IDs are different.');
+% end
 %%
 % ib = 1; 
 % p  = 1;

@@ -25,15 +25,18 @@ for ib =  1:numel(data_KF_out)
         c = nan(nR, 1);
         D = nan(nR, 1);
         tau = nan(nR, 1);
+        min_tau_obs = 6;
+        tau_min = 2 * 86400;
+        tau_max = 45 * 86400;
 
         % Extract necessary data for this path
         w_sword = data_KF_out(ib).w_sword{ip};  % Width for this path
         s_sword = data_KF_out(ib).s_sword{ip};  % Width for this path
-        if ~isempty(data_KF_out(ib).s_IRIS)
-            s_IRIS = data_KF_out(ib).s_IRIS{ip};  % Slope for this path
-        else
-            s_IRIS = nan;
-        end
+        % if ~isempty(data_KF_out(ib).s_IRIS)
+        %     s_IRIS = data_KF_out(ib).s_IRIS{ip};  % Slope for this path
+        % else
+        %     s_IRIS = nan;
+        % end
         Q_prior = data_KF_out(ib).Q_prior{ip};  % Mean discharge for this path
         center_pos = data_KF_out(ib).center_pos{ip};  % Center position for this path
         W = data_KF_out(ib).width_RiverSP{ip};  % Mean discharge for this path
@@ -71,11 +74,17 @@ for ib =  1:numel(data_KF_out)
             h_valid      = h(valid_indices);       % Valid water-level values
             time_valid   = find(valid_indices);    % Corresponding time indices
 
-            % Define bin width for grouping time lags (based on sampling interval)
-            bin_width = 4 * mean(diff(time_valid));  % Width of lag bins in days
-
             % Number of valid data points
             N = length(h_valid);
+            if N < min_tau_obs || var(h_valid) <= 0
+                continue;
+            end
+
+            % Define bin width for grouping time lags (based on sampling interval)
+            bin_width = 4 * mean(diff(time_valid));  % Width of lag bins in days
+            if ~isfinite(bin_width) || bin_width <= 0
+                continue;
+            end
 
             % Container for all pairwise lag-correlation samples: [dt, h_i*h_j]
             acf_data = [];
@@ -120,6 +129,7 @@ for ib =  1:numel(data_KF_out)
         end
 
         tau = decorrelation_lengths * 86400;
+        tau(isfinite(tau)) = min(max(tau(isfinite(tau)), tau_min), tau_max);
 
 
         % Calculate Hydraulic Diffusivity D and Wave Celerity c for each reach in the path
@@ -127,15 +137,23 @@ for ib =  1:numel(data_KF_out)
             % Remove NaNs and calculate c
             W_row  = W(i, :);
             S_row  = S(i, :);
-            non_empty_idx = ~cellfun(@isempty,  W_row);  % Non-empty index
+            non_empty_idx = ~cellfun(@isempty,  W_row) & ~cellfun(@isempty,  S_row);  % Non-empty index
             if sum(non_empty_idx) > 0
                 W_row = cell2mat(W_row(non_empty_idx));
                 S_row = cell2mat(S_row(non_empty_idx));
                 % c(i) = (5 / 3) * 1.2 * mean((W_row)'.^0.8 .* (abs(S_row))'.^0.6);
-                c(i) = (5 / 3) * 1.627053 * mean(W_row)'.^0.8 .* mean(abs(S_row))'.^0.6;
+             %  c(i) = (5 / 3) * 1.627053 * mean(W_row)'.^0.8 .* mean(abs(S_row))'.^0.6;
+                   c(i) = (5 / 3) * 1.025247 *w_sword(i).^0.8 .* (abs(s_sword(i)))'.^0.6;
+                % 原始方案：直接对每个 measurement 算 Q/(2WS) 后取 median，容易被很小的瞬时 slope 放大
                 D(i) = median(abs(Q_prior(i,1) ./ (2 * W_row .* abs(S_row))));
+                W_eff = median(W_row(isfinite(W_row) & W_row > 0), 'omitnan');
+                S_eff = median(abs(S_row(isfinite(S_row) & S_row ~= 0)), 'omitnan');
+                S_eff = max(S_eff, 1e-6);
+                if isfinite(W_eff) && W_eff > 0 && isfinite(S_eff) && S_eff > 0
+                    D(i) = abs(Q_prior(i,1) / (2 * W_eff * S_eff));
+                end
                 % c(i) = (5 / 3) * 1.48 * w_sword(i)'.^0.8 .* mean(abs(S_row))'.^0.6;
-                % D(i) = median(abs(Q_prior(i,1) ./ (2 * w_sword(i) .* abs(S_row))));
+                %D(i) = median(abs(Q_prior(i,1) ./ (2 * w_sword(i) .* s_sword(i))));
             end
 
             % Calculate D using the formula: D = Q/(2 * W * S)
@@ -224,13 +242,50 @@ for ib =  1:numel(data_KF_out)
                 valid_indices = ~isnan(tau);
 
                 if sum(valid_indices) >= 2  % 如果有效数据大于或等于 2，则使用线性插值
-                    % 使用线性插值进行补充
-                    tau(i) = interp1(center_pos(valid_indices), tau(valid_indices), center_pos(i), 'linear', 'extrap');
+                    % 先做线性插值（不外插），区间外会返回 NaN
+                    tau_lin = interp1(center_pos(valid_indices), ...
+                        tau(valid_indices), ...
+                        center_pos(i), ...
+                        'linear');
+
+                    if isnan(tau_lin)
+                        % 需要外插的地方：用最近邻
+                        tau(i) = interp1(center_pos(valid_indices), ...
+                            tau(valid_indices), ...
+                            center_pos(i), ...
+                            'nearest','extrap');
+                    else
+                        % 区间内：用线性插值
+                        tau(i) = tau_lin;
+                    end
                 else
                     % 如果有效数据不足 2，则使用最近邻插值
-                    tau(i) = tau(valid_indices);
+                    if any(valid_indices)
+                        tau(i) = tau(valid_indices);
+                    end
+                end
+                if isfinite(tau(i))
+                    tau(i) = min(max(tau(i), tau_min), tau_max);
                 end
             end
+        end
+
+        % Smooth tau along the path in log-space to reduce isolated reach-scale spikes.
+        valid_tau = isfinite(tau) & tau > 0;
+        if sum(valid_tau) >= 3
+            logtau = log(tau);
+            logtau_smooth = movmedian(logtau, 3, 'omitnan');
+            tau(valid_tau) = exp(logtau_smooth(valid_tau));
+            tau(valid_tau) = min(max(tau(valid_tau), tau_min), tau_max);
+        end
+
+        % Smooth D along the path in log-space to reduce isolated reach-scale spikes.
+        valid_D = isfinite(D) & D > 0;
+        D2 = D;
+        if sum(valid_D) >= 3
+            logD = log(D);
+            logD_smooth = movmedian(logD, 3, 'omitnan');
+            D(valid_D) = exp(logD_smooth(valid_D));
         end
 
         % Store the results back in the part structure for this path

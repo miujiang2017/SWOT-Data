@@ -12,6 +12,7 @@ function [H, z, R] = build_H_obs_SWOT_Q(sg_path, state_ep, ep, k_Qobs, obs_unc_m
 % obs_unc_mode:
 %   'mean_percent'  : 固定percent方案，R标准差 = Qprior(reach) * 固定mean percent(product)
 %   'qprior_group'  : 当前方案，R标准差 = Qprior(reach) * percent(product, Qprior group)
+%   'prior_range'   : R标准差 = (Qmax_prior - Qmin_prior) / 6 * obs_unc_scale
 % obs_unc_scale:
 
 if nargin < 5 || isempty(obs_unc_mode)
@@ -22,7 +23,7 @@ if nargin < 6 || isempty(obs_unc_scale)
 end
 
 nR = length(sg_path.rch_len{1});  % Number of reaches
-mean_percent_unc = [ 0.16237, 0.3350, 0.4618, 0.3005, 0.2564]; % [SIC4DVar, MOMMA, geoBAM, MetroMan, SADS]
+mean_percent_unc = [ 0.2783, 0.3350, 0.4618, 0.3005, 0.2564]; % [SIC4DVar, MOMMA, geoBAM, MetroMan, SADS]
 H = zeros(1, state_ep*nR);
 
 Q_cell      = [];
@@ -69,7 +70,7 @@ tmp = reshape(emp, state_ep*nR, 1);
 idx = find(tmp == 0);
 
 % ---- 2) 构造 z ----
-% 两个 uncertainty 选项都使用 z = Qobs - Qprior
+% uncertainty 选项都使用 z = Qobs - Qprior
 Qprior = sg_path.Q_prior{1, 1}(:,1);
 Q_mean_win = repmat(Qprior, 1, size(Q_win,2));
 Q_mean_win = num2cell(Q_mean_win);
@@ -100,8 +101,18 @@ switch lower(string(obs_unc_mode))
         non_empty_Qunc = Q_cell_unc(~cellfun(@isempty, Q_win));
         Rvec = cell2mat(non_empty_Qunc(:)).^2;   % 方差
 
+    case "prior_range"
+        % prior range方案：R标准差 = (Qmax_prior - Qmin_prior) / 6
+        sigma_reach = local_prior_range_sigma(sg_path, Qprior, mean_percent_unc(k_Qobs));
+        sigma_win = repmat(sigma_reach, 1, size(Q_win,2));
+        sigma_cell = num2cell(sigma_win);
+        Q_cell_unc = cellfun(@(x,s) abs(s) * obs_unc_scale, ...
+            Q_win, sigma_cell, 'UniformOutput', false);
+        non_empty_Qunc = Q_cell_unc(~cellfun(@isempty, Q_win));
+        Rvec = cell2mat(non_empty_Qunc(:)).^2;   % 方差
+
     otherwise
-        error('Unknown obs_unc_mode: %s. Use mean_percent or qprior_group.', string(obs_unc_mode));
+        error('Unknown obs_unc_mode: %s. Use mean_percent, qprior_group, or prior_range.', string(obs_unc_mode));
 end
 
 % 方案3（旧实验）：z = Qobs - Qprior；R标准差 = mean(Qobs, reach) * 手动percent(product)
@@ -214,6 +225,49 @@ end
 if ~isfinite(p) || p <= 0
     error('No valid percent is available for OBS_PERCENT_QPRIOR.%s group %s.', fld, group_name);
 end
+
+end
+
+
+function sigma_reach = local_prior_range_sigma(sg_path, Qprior, fallback_percent)
+
+fallback_sigma = abs(Qprior(:)) * fallback_percent;
+bad_fallback = ~isfinite(fallback_sigma) | fallback_sigma <= 0;
+fallback_sigma(bad_fallback) = eps;
+sigma_reach = fallback_sigma;
+
+if ~isfield(sg_path, 'minQ_prior') || ~isfield(sg_path, 'maxQ_prior') || ...
+        isempty(sg_path.minQ_prior) || isempty(sg_path.maxQ_prior) || ...
+        ~iscell(sg_path.minQ_prior) || ~iscell(sg_path.maxQ_prior) || ...
+        isempty(sg_path.minQ_prior{1}) || isempty(sg_path.maxQ_prior{1})
+    return
+end
+
+Qmin = sg_path.minQ_prior{1};
+Qmax = sg_path.maxQ_prior{1};
+if isempty(Qmin) || isempty(Qmax)
+    return
+end
+
+if isvector(Qmin)
+    Qmin = Qmin(:);
+else
+    Qmin = Qmin(:, 1);
+end
+if isvector(Qmax)
+    Qmax = Qmax(:);
+else
+    Qmax = Qmax(:, 1);
+end
+n_use = min([numel(sigma_reach), numel(Qmin), numel(Qmax)]);
+if n_use < 1
+    return
+end
+
+sigma_tmp = (Qmax(1:n_use) - Qmin(1:n_use)) / 8;
+ok = isfinite(sigma_tmp) & sigma_tmp > 0;
+sigma_reach(1:n_use) = fallback_sigma(1:n_use);
+sigma_reach(ok) = sigma_tmp(ok);
 
 end
 

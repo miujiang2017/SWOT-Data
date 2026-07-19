@@ -37,8 +37,8 @@ for ib = 1:numel(basins_out)
                 continue
             end
 
-            Ymean = mean(Yi(:), 'omitnan');
-            Qmean = mean(Qi(:,2), 'omitnan');
+            Ymean = median(Yi(:), 'omitnan');
+            Qmean = median(Qi(:,2), 'omitnan');
 
             Wi = width(ir);
             Si = slope(ir);
