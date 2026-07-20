@@ -53,8 +53,8 @@ for i1=1:n1
 %         C(i1,i2) = v'*u * dinc; % Papoulis book eq. 10-84.
 
         %% Convolution:
-       R(i1,i2) = integral(@(v)func(v,k,h,c,D,talT),-Inf,k);%,'RelTol',10^-3);
-        %R(i1,i2) = integral(@(v)func(v,k,h,c,D,talT),-Inf,k,'RelTol',10^-3);
+       % R(i1,i2) = integral(@(v)func(v,k,h,c,D,talT),-Inf,k);
+       R(i1,i2) = integral(@(v)func(v,k,h,c,D,talT),-Inf,k,'RelTol',1e-3,'AbsTol',1e-6);
     end
 end
 return
