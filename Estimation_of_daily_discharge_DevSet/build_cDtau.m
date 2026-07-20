@@ -143,7 +143,7 @@ for ib =  1:numel(data_KF_out)
                 S_row = cell2mat(S_row(non_empty_idx));
                 % c(i) = (5 / 3) * 1.2 * mean((W_row)'.^0.8 .* (abs(S_row))'.^0.6);
              %  c(i) = (5 / 3) * 1.627053 * mean(W_row)'.^0.8 .* mean(abs(S_row))'.^0.6;
-                   c(i) = (5 / 3) * 1.025247 *w_sword(i).^0.8 .* (abs(s_sword(i)))'.^0.6;
+                   c(i) = (5 / 3) * 1.627053 *w_sword(i).^0.8 .* (abs(s_sword(i)))'.^0.6;
                 % 原始方案：直接对每个 measurement 算 Q/(2WS) 后取 median，容易被很小的瞬时 slope 放大
                 D(i) = median(abs(Q_prior(i,1) ./ (2 * W_row .* abs(S_row))));
                 W_eff = median(W_row(isfinite(W_row) & W_row > 0), 'omitnan');
