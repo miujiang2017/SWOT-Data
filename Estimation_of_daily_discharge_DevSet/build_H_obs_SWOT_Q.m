@@ -1,4 +1,4 @@
-function [H, z, R] = build_H_obs_SWOT_Q(sg_path, state_ep, ep, k_Qobs, obs_unc_mode, obs_unc_scale)
+function [H, z, R] = build_H_obs_SWOT_Q(sg_path, state_ep, ep, k_Qobs, obs_unc_mode, obs_unc_scale, obs_corr_mode)
 % BUILD_H_OBS_SWOT_Q
 % 输入单条 path 的结构 sg_path，输出该 path 在当前窗口的 H, z, R
 %
@@ -12,13 +12,23 @@ function [H, z, R] = build_H_obs_SWOT_Q(sg_path, state_ep, ep, k_Qobs, obs_unc_m
 % obs_unc_mode:
 %   'mean_percent'  : 固定percent方案，R标准差 = Qprior(reach) * 固定mean percent(product)
 %   'qprior_group'  : 当前方案，R标准差 = Qprior(reach) * percent(product, Qprior group)
+%   'qprior_group_p68/p75': use the group empirical 68th/75th percentile percent
+%   'qprior_group_high_p68/p75/p90': use recommended percent except high-Qprior group percentile
+%   'qprior_group_floor_mean': qprior_group, with percent no smaller than product mean percent
+%   'qprior_power_*': 幂律方案，R标准差 = percent(group) * Qref^(1-beta) * Qprior^beta
 % obs_unc_scale:
+% obs_corr_mode:
+%   'none'          : diagonal R
+%   'same_reach_tau': same-reach observation errors use exp(-dt/tau) covariance
 
 if nargin < 5 || isempty(obs_unc_mode)
     obs_unc_mode = 'qprior_group';
 end
 if nargin < 6 || isempty(obs_unc_scale)
     obs_unc_scale = 1;
+end
+if nargin < 7 || isempty(obs_corr_mode)
+    obs_corr_mode = 'none';
 end
 
 nR = length(sg_path.rch_len{1});  % Number of reaches
@@ -82,26 +92,65 @@ switch lower(string(obs_unc_mode))
         % 固定percent方案：R标准差 = Qprior(reach) * 固定mean percent(product)
         Qprior_win = repmat(Qprior, 1, size(Q_win,2));
         Qprior_cell = num2cell(Qprior_win);
-        Q_cell_unc = cellfun(@(x,y) abs(y) * mean_percent_unc(k_Qobs), ...
+        Q_cell_unc = cellfun(@(x,y) abs(y) * mean_percent_unc(k_Qobs) * obs_unc_scale, ...
             Q_win, Qprior_cell, 'UniformOutput', false);
         non_empty_Qunc = Q_cell_unc(~cellfun(@isempty, Q_win));
         Rvec = cell2mat(non_empty_Qunc(:)).^2;   % 方差
 
-    case "qprior_group"
+    otherwise
+        mode = lower(string(obs_unc_mode));
+        floor_mean_percent = endsWith(mode, "_floor_mean");
+        base_mode = erase(mode, "_floor_mean");
+        percent_stat = "recommended_percent";
+        high_percent_stat = "";
+        if any(base_mode == ["qprior_group_high_p68", "qprior_group_high_p75", "qprior_group_high_p90"])
+            high_percent_stat = extractAfter(base_mode, "qprior_group_high_");
+            base_mode = "qprior_group";
+        end
+        if any(base_mode == ["qprior_group_p68", "qprior_group_p75", "qprior_group_p90"])
+            percent_stat = extractAfter(base_mode, "qprior_group_");
+            base_mode = "qprior_group";
+        end
+        if base_mode == "qprior_group"
+            beta = 1;
+        elseif startsWith(base_mode, "qprior_power_")
+            beta = local_parse_beta(base_mode, "qprior_power_");
+        elseif startsWith(base_mode, "mean_power_")
+            beta = local_parse_beta(base_mode, "mean_power_");
+        else
+            error('Unknown obs_unc_mode: %s. Use mean_percent, qprior_group, qprior_power_0p75, etc.', string(obs_unc_mode));
+        end
+
         % 当前方案：R标准差 = Qprior(reach) * percent(product, Qprior group)
         % percent 和 Qprior 分组门槛来自 obs_percent_Qprior 的输出 OBS_PERCENT_QPRIOR
-        percent_by_reach = local_percent_by_Qprior_group(Qprior, k_Qobs);
+        if startsWith(base_mode, "mean_power_")
+            percent_by_reach = mean_percent_unc(k_Qobs) .* ones(size(Qprior));
+        else
+            percent_by_reach = local_percent_by_Qprior_group(Qprior, k_Qobs, percent_stat);
+            if strlength(high_percent_stat) > 0
+                percent_by_reach = local_apply_high_group_percent(Qprior, k_Qobs, ...
+                    percent_by_reach, high_percent_stat);
+            end
+            if floor_mean_percent
+                percent_by_reach = max(percent_by_reach, mean_percent_unc(k_Qobs));
+            end
+        end
+        Qref = median(abs(Qprior(isfinite(Qprior) & Qprior ~= 0)), 'omitnan');
+        if ~isfinite(Qref) || Qref <= 0
+            Qref = median(abs(Qprior), 'omitnan');
+        end
+        if ~isfinite(Qref) || Qref <= 0
+            Qref = 1;
+        end
+        Qscale_by_reach = (Qref .^ (1 - beta)) .* (max(abs(Qprior), eps) .^ beta);
         percent_win = repmat(percent_by_reach, 1, size(Q_win,2));
-        Qprior_win = repmat(Qprior, 1, size(Q_win,2));
-        Qprior_cell = num2cell(Qprior_win);
+        Qscale_win = repmat(Qscale_by_reach, 1, size(Q_win,2));
+        Qscale_cell = num2cell(Qscale_win);
         percent_cell = num2cell(percent_win);
         Q_cell_unc = cellfun(@(x,y,p) abs(y) * p * obs_unc_scale, ...
-            Q_win, Qprior_cell, percent_cell, 'UniformOutput', false);
+            Q_win, Qscale_cell, percent_cell, 'UniformOutput', false);
         non_empty_Qunc = Q_cell_unc(~cellfun(@isempty, Q_win));
         Rvec = cell2mat(non_empty_Qunc(:)).^2;   % 方差
-
-    otherwise
-        error('Unknown obs_unc_mode: %s. Use mean_percent or qprior_group.', string(obs_unc_mode));
 end
 
 % 方案3（旧实验）：z = Qobs - Qprior；R标准差 = mean(Qobs, reach) * 手动percent(product)
@@ -138,7 +187,7 @@ end
 % non_empty_Qunc = Q_cell_unc(~cellfun(@isempty, Q_win));
 % Rvec = cell2mat(non_empty_Qunc(:)).^2;   % 方差
 
-R = diag(Rvec);
+R = local_build_observation_covariance(Rvec, idx, nR, sg_path, obs_corr_mode);
 
 % ---- 4) 构造 H ----
 H = zeros(numel(idx), state_ep*nR);
@@ -148,7 +197,79 @@ end
 end
 
 
-function percent_by_reach = local_percent_by_Qprior_group(Qprior, k_Qobs)
+function R = local_build_observation_covariance(Rvec, idx, nR, sg_path, obs_corr_mode)
+
+mode = lower(string(obs_corr_mode));
+if mode == "none"
+    R = diag(Rvec);
+    return
+end
+
+reach_idx = mod(idx - 1, nR) + 1;
+day_idx = floor((idx - 1) ./ nR) + 1;
+
+switch mode
+    case "same_reach_tau"
+        tau_days = local_tau_days(sg_path, nR);
+        s = sqrt(max(Rvec(:), eps));
+        C = eye(numel(Rvec));
+        for i = 1:numel(Rvec)
+            same_reach = reach_idx == reach_idx(i);
+            dt = abs(day_idx(same_reach) - day_idx(i));
+            C(i, same_reach) = exp(-dt ./ max(tau_days(reach_idx(i)), eps));
+        end
+        R = (s * s') .* C;
+        R = (R + R') ./ 2;
+        ridge = max(1e-8 * mean(Rvec, 'omitnan'), eps);
+        R = R + ridge * eye(size(R, 1));
+
+    otherwise
+        error('Unknown obs_corr_mode: %s. Use none or same_reach_tau.', string(obs_corr_mode));
+end
+
+end
+
+
+function tau_days = local_tau_days(sg_path, nR)
+
+tau_days = nan(nR, 1);
+if isfield(sg_path, 'tau') && ~isempty(sg_path.tau) && ~isempty(sg_path.tau{1})
+    tau_days = abs(sg_path.tau{1}(:)) ./ 86400;
+end
+
+if numel(tau_days) < nR
+    tau_days(end + 1:nR, 1) = NaN;
+else
+    tau_days = tau_days(1:nR);
+end
+
+good = isfinite(tau_days) & tau_days >= 2;
+fallback = median(tau_days(good), 'omitnan');
+if ~isfinite(fallback) || fallback < 2
+    fallback = 7;
+end
+tau_days(~good) = fallback;
+
+end
+
+
+function beta = local_parse_beta(mode, prefix)
+
+token = erase(string(mode), prefix);
+token = replace(token, "p", ".");
+beta = str2double(token);
+if ~isfinite(beta) || beta <= 0 || beta > 1.5
+    error('Invalid uncertainty beta in obs_unc_mode: %s.', string(mode));
+end
+
+end
+
+
+function percent_by_reach = local_percent_by_Qprior_group(Qprior, k_Qobs, percent_stat)
+
+if nargin < 3 || isempty(percent_stat)
+    percent_stat = "recommended_percent";
+end
 
 global OBS_PERCENT_QPRIOR
 
@@ -178,9 +299,9 @@ if any(~isfinite(edges))
     error('OBS_PERCENT_QPRIOR.%s has invalid Qprior group thresholds.', fld);
 end
 
-p_low = local_get_group_percent(S, 'low', fld);
-p_mid = local_get_group_percent(S, 'mid', fld);
-p_high = local_get_group_percent(S, 'high', fld);
+p_low = local_get_group_percent(S, 'low', fld, percent_stat);
+p_mid = local_get_group_percent(S, 'mid', fld, percent_stat);
+p_high = local_get_group_percent(S, 'high', fld, percent_stat);
 
 percent_by_reach = nan(size(Qprior));
 percent_by_reach(Qprior <= edges(1)) = p_low;
@@ -195,14 +316,32 @@ end
 end
 
 
-function p = local_get_group_percent(S, group_name, fld)
+function percent_by_reach = local_apply_high_group_percent(Qprior, k_Qobs, percent_by_reach, percent_stat)
+
+global OBS_PERCENT_QPRIOR
+product_fields = {'Q_SIC4DVar','Q_MOMMA','Q_geoBAM','Q_MetroMan','Q_SADS'};
+fld = product_fields{k_Qobs};
+S = OBS_PERCENT_QPRIOR.(fld);
+edges = S.Qprior_group_edges;
+p_high = local_get_group_percent(S, 'high', fld, percent_stat);
+percent_by_reach(Qprior > edges(2)) = p_high;
+
+end
+
+
+function p = local_get_group_percent(S, group_name, fld, percent_stat)
+
+if nargin < 4 || isempty(percent_stat)
+    percent_stat = "recommended_percent";
+end
 
 p = NaN;
 
 if isfield(S.group, group_name)
     G = S.group.(group_name);
-    if isfield(G, 'recommended_percent') && isfinite(G.recommended_percent) && G.recommended_percent > 0
-        p = G.recommended_percent;
+    stat = char(percent_stat);
+    if isfield(G, stat) && isfinite(G.(stat)) && G.(stat) > 0
+        p = G.(stat);
     end
 end
 

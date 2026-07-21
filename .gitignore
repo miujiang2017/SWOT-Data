@@ -1,4 +1,5 @@
 *.mat
+*.fig
 *.asv
 .DS_Store
 __MACOSX/
