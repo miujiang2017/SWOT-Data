@@ -40,7 +40,7 @@ for ib =  1:numel(data_KF_out)
         min_tau_obs = 10;
         min_pairs_per_bin = 10;
         tau_min = 2 * 86400;
-        tau_max = 60* 86400;%2 * state_ep * 86400;
+        tau_max = 2 * state_ep * 86400;
 
         % Extract necessary data for this path
         w_sword = data_KF_out(ib).w_sword{ip};  % Width for this path
