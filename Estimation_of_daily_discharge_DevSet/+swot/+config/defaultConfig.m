@@ -10,6 +10,7 @@ repoDataDir = fileparts(devSetDir);
 cfg = struct();
 
 cfg.paths.devSetDir = devSetDir;
+cfg.paths.legacyDir = fullfile(devSetDir, 'legacy');
 cfg.paths.riverSpDir = fullfile(repoDataDir, 'RiverSP');
 cfg.paths.swordDir = fullfile(repoDataDir, 'SWORD V16');
 cfg.paths.sosDir = fullfile(repoDataDir, 'SoS');

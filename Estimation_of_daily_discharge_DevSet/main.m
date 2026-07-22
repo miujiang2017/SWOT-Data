@@ -2,6 +2,11 @@ clear all
 close all
 clc
 
+legacy_dir = fullfile(pwd, 'legacy');
+if isfolder(legacy_dir)
+    addpath(genpath(legacy_dir));
+end
+
 addpath(fullfile(pwd, '..', 'RiverSP'));
 addpath(fullfile(pwd, '..', 'SWORD V16'));
 addpath(fullfile(pwd, '..', 'SoS'));

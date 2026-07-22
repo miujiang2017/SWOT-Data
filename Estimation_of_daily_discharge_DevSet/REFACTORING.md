@@ -6,7 +6,8 @@ translation and method expansion easier without changing current numerical resul
 
 ## Entry Points
 
-- `main.m`: original research script, left unchanged for reference.
+- `main.m`: original research script, kept as the legacy runnable entry point. The
+  only added logic is a path bootstrap for the moved `legacy/` folders.
 - `main_refactored.m`: refactored entry point using the new pipeline.
 - `swot.config.defaultConfig`: legacy-compatible smoke config. By default it runs
   basin `5`, path `1`, matching the active loop in `main.m`.
@@ -22,6 +23,12 @@ config
 
 pipeline
   Orchestrates setup, data preparation, estimator execution, validation, and plots.
+
+legacy
+  Original MATLAB functions grouped by role (`io`, `model`, `obs`, `filter`,
+  `eval`, `plot`, `diagnostics`, `utils`). Function bodies are intentionally kept
+  numerically unchanged, so old scripts can still call the same function names
+  after `legacy/` is added to the MATLAB path.
 
 cache
   Loads existing basinsv16_*.mat and Phi_save/Q_save caches. This avoids repeated
@@ -89,3 +96,27 @@ runOut = swot.pipeline.runExperiment(cfg);
 Merge chunk result files in a separate post-processing step. Keep evaluation and
 plotting as separate jobs so estimator jobs do not depend on gauge/reference data
 unless explicitly requested.
+
+## Directory Layout
+
+```text
+Estimation_of_daily_discharge_DevSet/
+  main.m
+  main_refactored.m
+  +swot/
+    +config/
+    +pipeline/
+    +cache/
+    +filter/
+    +utils/
+  legacy/
+    io/
+    model/
+    obs/
+    filter/
+    eval/
+    plot/
+    diagnostics/
+    utils/
+  tests/
+```
