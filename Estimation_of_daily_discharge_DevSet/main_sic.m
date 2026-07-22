@@ -52,10 +52,10 @@ opts.allow_singleton_at_hard_break = true;
 
 [basins, split_info] = split_basins_paths_by_Qprior(basins, opts);
 use_svs = true;
-%[k, ~] = compute_k(basins);
+
 %% Filter paths with gauge stations and SWOT discharge
 % option = 1: 需要有任意 SWOT Q 产品
-% option = 2: 需要有 SVS gauge
+% option = 2: 需要有 SVS 
 basins_out = filter_basins(basins,2);
 
 %% Pull reach data in RiverSP using Hydrocron
@@ -92,73 +92,81 @@ start_date = '2023-03-29';
 end_date = '2025-05-02';
 state_ep = 22;
 data_KF = data_for_KF(basins_out, start_date, end_date, state_ep);
+[k, ~] = compute_k(basins_out);
 data_KF_out = filter_KF(data_KF);
 
 %% Generate start value
+load('data_KF_out.mat')
 data_KF_out = build_cDtau(data_KF_out);
 
 % Loop over each basin
-Q_results = [];
 %% Kalman filtering
 % load('Phi_save.mat')
 % load('Q_save.mat')
-out = obs_percent_Qprior(basins, use_svs);
-global OBS_PERCENT_QPRIOR
-OBS_PERCENT_QPRIOR = out;
+% out = obs_percent_Qprior(basins, use_svs);
+% global OBS_PERCENT_QPRIOR
+% OBS_PERCENT_QPRIOR = out;
+%%
 obs_unc_mode = 'mean_percent'; % 'mean_percent': Qprior*固定percent；'qprior_group': Qprior*分组percent；'prior_range': (Qmax-Qmin)/6
 obs_unc_scale = 1;
 use_rts = true; % false: 只用KF；true: KF后加RTS smoother
+x0_method = "zero_fixed_start"; % "anomaly_first": 从SIC4DVar出现日开始，用SIC anomaly初始值；"zero_fixed_start": 从第1天开始，初始anomaly全0
+combine_methods = ["median", "center", "center_weighted", "trimmed", ...
+    "inverse_variance", "robust"]; % 只计算和保存这里选中的combine方法
+combine_csv_file = 'combine_validation_sic.csv';
+combine_mat_file = 'combine_validation_sic.mat';
+Q_results = local_init_combine_container(combine_methods);
+Q_results_post = local_init_combine_container(combine_methods);
+combine_csv_rows = table;
 %%
 for ib =1:numel(data_KF_out)%1:numel(data_KF_out)
     ib
     sg_basin = data_KF_out(ib);
     % Loop over each path in the basin
-    for ip = 1:numel(sg_basin.paths)
+    for ip = 1%:numel(sg_basin.paths)
         sg_path = get_path_struct(sg_basin, ip);
         % sg_path = subset_sg_path_reaches(sg_path, 35, 46);  % 只保留第 3 到第 8 个 reach
         nR = length(sg_path.rch_len{1});  % Number of reaches
         sic_start_day_idx = local_first_sic_path_day_idx(sg_path, nR);
         if isnan(sic_start_day_idx)
-            Qest_med = local_nan_Qest(nR, nt);
-            [vali_estmed, ...
-                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-                vali_SADS_interp, vali_MetroMan_interp] = ...
-                validation4_sic(Qest_med, sg_path, nR,use_svs);
-            Q_results = save_Qest(Q_results, ib, ip, ...
-                Qest_med, ...
-                vali_estmed, ...
-                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-                vali_SADS_interp, vali_MetroMan_interp);
+            Qest_methods_full = local_nan_combine_methods(combine_methods, nR, nt);
+            [Q_results, Q_results_post, combine_csv_rows] = local_validate_combine_methods( ...
+                Q_results, Q_results_post, combine_csv_rows, Qest_methods_full, combine_methods, ...
+                ib, ip, sg_path, nR, use_svs, discharge_interp_coord);
             continue
         end
-        nt_run = nt - sic_start_day_idx + 1;
+        switch x0_method
+            case "anomaly_first"
+                kf_start_day_idx = sic_start_day_idx;
+                nt_run = nt - kf_start_day_idx + 1;
+                sg_path_kf = local_slice_sic_daily_cells(sg_path, kf_start_day_idx);
+                xn1n1 = build_sic_linear_x0(sg_path, sic_start_day_idx, state_ep, discharge_interp_coord);
+
+            case "zero_fixed_start"
+                kf_start_day_idx = 1;
+                nt_run = nt;
+                sg_path_kf = sg_path;
+                xn1n1 = zeros(nR * state_ep, 1);
+
+            otherwise
+                error('main_sic:UnknownX0Method', ...
+                    'Unknown x0_method: %s. Use "anomaly_first" or "zero_fixed_start".', string(x0_method));
+        end
         if nt_run <= state_ep
-            Qest_med = local_nan_Qest(nR, nt);
-            [vali_estmed, ...
-                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-                vali_SADS_interp, vali_MetroMan_interp] = ...
-                validation4_sic(Qest_med, sg_path, nR,use_svs);
-            Q_results = save_Qest(Q_results, ib, ip, ...
-                Qest_med, ...
-                vali_estmed, ...
-                vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-                vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-                vali_SADS_interp, vali_MetroMan_interp);
+            Qest_methods_full = local_nan_combine_methods(combine_methods, nR, nt);
+            [Q_results, Q_results_post, combine_csv_rows] = local_validate_combine_methods( ...
+                Q_results, Q_results_post, combine_csv_rows, Qest_methods_full, combine_methods, ...
+                ib, ip, sg_path, nR, use_svs, discharge_interp_coord);
             continue
         end
-        sg_path_kf = local_slice_sic_daily_cells(sg_path, sic_start_day_idx);
 
         %% Build transition matrix Phi and process noise
-        [Phi_st, Q_st, ~] = build_Phi_SWOT(sg_path_kf, state_ep);
+        [Phi_st, Q_st] = build_Phi_SWOT(sg_path_kf, state_ep);
          Phi_save{ib}{ip} =Phi_st;
         Q_save{ib}{ip} =Q_st ;
         % Phi_st=Phi_save{ib}{ip};
         % Q_st = Q_save{ib}{ip};
         obs_mean = sg_path.Q_prior{1, 1}(:,1);
-        xn1n1 = build_sic_linear_x0(sg_path, sic_start_day_idx, state_ep, discharge_interp_coord);%reshape(sg_path.start_value{1,1} - obs_mean, [], 1);
         sigma0 = calc_sigma0(sg_path);
         tmp=repmat(sigma0.^2, state_ep, 1);%(sg_path.start_value{1,1}*0.18).^2;
         Pn1n1 = diag(tmp(:));
@@ -237,63 +245,35 @@ for ib =1:numel(data_KF_out)%1:numel(data_KF_out)
         end
 
         %% Store results for the current path
-        [~, Qest_med_kf] = combine_xnn_SWOT(xnn, Pnn, nR, nt_run, state_ep, sg_path_kf, ...
-            use_rts, xnn1, Pnn1, Phi_st);
-        Qest_med = local_pad_Qest_to_full_time(Qest_med_kf, nR, nt, sic_start_day_idx);
-        [vali_estmed, ...
-            vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-            vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-            vali_SADS_interp, vali_MetroMan_interp] = ...
-            validation4_sic(Qest_med, sg_path, nR,use_svs);
-        % vali_estmed.NSE
-        % Q_results(263).vali_estmed{1, 1}.NSE
-        % Q_results(263).vali_SIC4DVar{1, 1}.NSE
-        % Q_results(263).vali_geoBAM{1, 1}.NSE
-        % Q_results(263).vali_MetroMan{1, 1}.NSE
-        Q_results = save_Qest(Q_results, ib, ip, ...
-            Qest_med, ...
-            vali_estmed, ...
-            vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-            vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-            vali_SADS_interp, vali_MetroMan_interp);
-
+        [~, ~, Qest_methods_run] = combine_xnn_SWOT(xnn, Pnn, nR, nt_run, state_ep, sg_path_kf, ...
+            use_rts, xnn1, Pnn1, Phi_st, combine_methods);
+        Qest_methods_full = local_pad_combine_methods( ...
+            Qest_methods_run, combine_methods, nR, nt, kf_start_day_idx);
+        [Q_results, Q_results_post, combine_csv_rows] = local_validate_combine_methods( ...
+            Q_results, Q_results_post, combine_csv_rows, Qest_methods_full, combine_methods, ...
+            ib, ip, sg_path, nR, use_svs, discharge_interp_coord);
 
         %% Clear
         clear xnn1 Pnn1 xnn Pnn
     end
 end
-%%
-%load('Q_results.mat')
-use_svs=true;
-for ib =1:numel(data_KF_out)%1:numel(data_KF_out)
-    sg_basin = data_KF_out(ib);
-    % Loop over each path in the basin
-    for ip = 1:numel(sg_basin.paths)
-        sg_path = get_path_struct(sg_basin, ip);
-        nR = length(sg_path.rch_len{1});  % Number of reaches
-        Qest_med = Q_results(ib).Qest_med{1, ip}  ;
-        [vali_estmed, ...
-            vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-            vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-            vali_SADS_interp, vali_MetroMan_interp] = ...
-            validation4(Qest_med, sg_path, nR,use_svs);
-                Q_results = save_Qest(Q_results, ib, ip, ...
-            Qest_med, ...
-            vali_estmed, ...
-            vali_SIC4DVar, vali_MOMMA, vali_geoBAM, vali_SADS, vali_MetroMan, ...
-            vali_SIC4DVar_interp, vali_MOMMA_interp, vali_geoBAM_interp, ...
-            vali_SADS_interp, vali_MetroMan_interp);
-    end
+%% Save selected combine results
+if isfield(Q_results, 'is_combine_container')
+    Q_results = rmfield(Q_results, 'is_combine_container');
 end
-plot_reach_metric_cdf(Q_results);
-plot_timeseries(Q_results, data_KF_out, start_date);
-% 
-plot_all_metrics_on_map(data_KF_out, Q_results, file_prefix)
-plot_reach_relative_error_cdf(Q_results, data_KF_out, start_date)
-plot_reach_metric_barplot(Q_results, data_KF_out)
-plot_reaches_on_map(data_KF_out, file_prefix)
-plot_metric_improvement_boxchart(Q_results)
+if isfield(Q_results_post, 'is_combine_container')
+    Q_results_post = rmfield(Q_results_post, 'is_combine_container');
+end
+if ~isempty(combine_csv_rows)
+    writetable(combine_csv_rows, combine_csv_file);
+end
+save(combine_mat_file, 'Q_results', 'Q_results_post', 'combine_methods', ...
+    'combine_csv_rows', 'use_rts', 'x0_method', '-v7.3');
 
+% 后续画图时先选择一个combine方法，例如：
+Q_results_selected = Q_results.center_weighted;
+plot_reach_metric_cdf(Q_results_selected);
+plot_reaches_on_map(data_KF_out, file_prefix)
 %%
 basins0 = enumerate_subset_paths_by_basin(SoS_PriorsData_v16, file_prefix);
 
@@ -547,6 +527,161 @@ end
 % fprintf('Total non-NaN values: %d\n', numel(all_vals));
 % fprintf('Unique values: %d\n', (unique_vals));
 %%
+function Qest_methods = local_nan_combine_methods(methods, nR, nt)
+
+Qest_methods = struct;
+for im = 1:numel(methods)
+    Qest_methods.(char(methods(im))) = local_nan_Qest(nR, nt);
+end
+
+end
+
+
+function results = local_init_combine_container(methods)
+
+results = struct('is_combine_container', true);
+for im = 1:numel(methods)
+    results.(char(methods(im))) = struct([]);
+end
+
+end
+
+
+function Qest_full = local_pad_combine_methods(Qest_run, methods, nR, nt, start_day_idx)
+
+Qest_full = struct;
+for im = 1:numel(methods)
+    name = char(methods(im));
+    Qest_full.(name) = local_pad_Qest_to_full_time( ...
+        Qest_run.(name), nR, nt, start_day_idx);
+end
+
+end
+
+
+function [Q_results, Q_results_post, csv_rows] = local_validate_combine_methods( ...
+    Q_results, Q_results_post, csv_rows, Qest_methods, methods, ...
+    ib, ip, sg_path, nR, use_svs, discharge_interp_coord)
+
+for im = 1:numel(methods)
+    name = char(methods(im));
+    Qest = Qest_methods.(name);
+    [vali_est, vali_sic, vali_sic_interp] = ...
+        validation4_sic(Qest, sg_path, nR, use_svs);
+
+    Q_results.(name) = save_Qest(Q_results.(name), ib, ip, ...
+        Qest, vali_est, vali_sic, vali_sic_interp);
+
+    [Qest_post, ~] = repair_negative_Qest( ...
+        Qest, sg_path, discharge_interp_coord);
+    [vali_est_post, vali_sic_post, vali_sic_interp_post] = ...
+        validation4_sic(Qest_post, sg_path, nR, use_svs);
+    Q_results_post.(name) = save_Qest(Q_results_post.(name), ib, ip, ...
+        Qest_post, vali_est_post, vali_sic_post, vali_sic_interp_post);
+
+    rows_raw = local_make_combine_csv_rows(name, "raw", ib, ip, sg_path, nR, ...
+        vali_est, vali_sic, vali_sic_interp);
+    rows_post = local_make_combine_csv_rows(name, "post", ib, ip, sg_path, nR, ...
+        vali_est_post, vali_sic_post, vali_sic_interp_post);
+    if isempty(rows_raw)
+        rows = rows_post;
+    elseif isempty(rows_post)
+        rows = rows_raw;
+    else
+        rows = [rows_raw; rows_post];
+    end
+    if ~isempty(rows)
+        if isempty(csv_rows)
+            csv_rows = rows;
+        else
+            if ~ismember('processing', csv_rows.Properties.VariableNames)
+                csv_rows.processing = repmat("raw", height(csv_rows), 1);
+            end
+            target_names = rows.Properties.VariableNames;
+            if ~all(ismember(target_names, csv_rows.Properties.VariableNames))
+                error('main_sic:CombineCsvSchemaMismatch', ...
+                    'Existing combine_csv_rows has an incompatible column schema.');
+            end
+            csv_rows = csv_rows(:, target_names);
+            csv_rows = [csv_rows; rows]; %#ok<AGROW>
+        end
+    end
+end
+
+end
+
+
+function rows = local_make_combine_csv_rows(method, processing, ib, ip, sg_path, nR, ...
+    vali_est, vali_sic, vali_sic_interp)
+
+est_corr = local_vali_metric(vali_est, 'corr', nR);
+est_NSE = local_vali_metric(vali_est, 'NSE', nR);
+est_rRMSE = local_vali_metric(vali_est, 'rRMSE', nR);
+est_rB = local_vali_metric(vali_est, 'rB', nR);
+
+valid = isfinite(est_corr) | isfinite(est_NSE) | ...
+    isfinite(est_rRMSE) | isfinite(est_rB);
+if ~any(valid)
+    rows = table;
+    return
+end
+
+reach_id = nan(nR, 1);
+if isfield(sg_path, 'paths') && ~isempty(sg_path.paths)
+    rid = sg_path.paths;
+    if iscell(rid)
+        rid = rid{1};
+    end
+    rid = double(rid(:));
+    ncopy = min(nR, numel(rid));
+    reach_id(1:ncopy) = rid(1:ncopy);
+end
+
+sic_corr = local_vali_metric(vali_sic, 'corr', nR);
+sic_NSE = local_vali_metric(vali_sic, 'NSE', nR);
+sic_rRMSE = local_vali_metric(vali_sic, 'rRMSE', nR);
+sic_rB = local_vali_metric(vali_sic, 'rB', nR);
+sic_interp_corr = local_vali_metric(vali_sic_interp, 'corr', nR);
+sic_interp_NSE = local_vali_metric(vali_sic_interp, 'NSE', nR);
+sic_interp_rRMSE = local_vali_metric(vali_sic_interp, 'rRMSE', nR);
+sic_interp_rB = local_vali_metric(vali_sic_interp, 'rB', nR);
+
+idx = find(valid);
+rows = table(repmat(string(method),numel(idx),1), ...
+    repmat(string(processing),numel(idx),1), repmat(ib,numel(idx),1), ...
+    repmat(ip,numel(idx),1), idx, reach_id(idx), ...
+    est_corr(idx), est_NSE(idx), est_rRMSE(idx), est_rB(idx), ...
+    sic_corr(idx), sic_NSE(idx), sic_rRMSE(idx), sic_rB(idx), ...
+    sic_interp_corr(idx), sic_interp_NSE(idx), ...
+    sic_interp_rRMSE(idx), sic_interp_rB(idx), ...
+    'VariableNames', {'method','processing','ib','ip','reach_index','reach_id', ...
+    'est_corr','est_NSE','est_rRMSE','est_rB', ...
+    'sic_raw_corr','sic_raw_NSE','sic_raw_rRMSE','sic_raw_rB', ...
+    'sic_interp_corr','sic_interp_NSE','sic_interp_rRMSE','sic_interp_rB'});
+
+end
+
+
+function v = local_vali_metric(vali, field_name, nR)
+
+v = nan(nR, 1);
+if isempty(vali) || ~isstruct(vali) || ~isfield(vali, field_name)
+    return
+end
+raw = vali.(field_name);
+if iscell(raw)
+    if isempty(raw)
+        return
+    end
+    raw = raw{1};
+end
+raw = raw(:);
+ncopy = min(nR, numel(raw));
+v(1:ncopy) = raw(1:ncopy);
+
+end
+
+
 function sg_path = get_path_struct(basin, ip)
 % GET_PATH_STRUCT  从 data_KF_out(ib) 中提取第 ip 条 path 的子结构
 % 输出 sg_path 中所有按 path 的字段都变成 1×1 cell 包裹

@@ -12,7 +12,7 @@ validateattributes(state_ep, {'numeric'}, ...
     {'scalar','real','finite','positive'}, mfilename, 'state_ep');
 
 % Loop through each part in data_KF_out
-for ib =  1:6%numel(data_KF_out)
+for ib =  1:numel(data_KF_out)
     % Directly work on the current part in data_KF_out
     nPaths = numel(data_KF_out(ib).paths);  % Number of paths for this part
 
