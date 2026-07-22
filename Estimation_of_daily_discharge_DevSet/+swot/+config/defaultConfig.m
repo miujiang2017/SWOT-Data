@@ -11,6 +11,7 @@ cfg = struct();
 
 cfg.paths.devSetDir = devSetDir;
 cfg.paths.legacyDir = fullfile(devSetDir, 'legacy');
+cfg.paths.staticNcDir = fullfile(devSetDir, 'data', 'static_nc');
 cfg.paths.riverSpDir = fullfile(repoDataDir, 'RiverSP');
 cfg.paths.swordDir = fullfile(repoDataDir, 'SWORD V16');
 cfg.paths.sosDir = fullfile(repoDataDir, 'SoS');
@@ -18,7 +19,8 @@ cfg.paths.sosDatasetDir = fullfile(cfg.paths.sosDir, 'SoS Dataset Oct');
 
 cfg.data.filePrefix = 'na';
 cfg.data.sosType = 'uncon';
-cfg.data.irisFile = 'IRIS_2.9.nc';
+cfg.data.irisFile = fullfile(cfg.paths.staticNcDir, 'IRIS_2.9.nc');
+cfg.data.svsFile = fullfile(cfg.paths.staticNcDir, 'SVS_v1_0_1.nc');
 cfg.data.useSvs = true;
 cfg.data.filterBasinsOption = 2;
 

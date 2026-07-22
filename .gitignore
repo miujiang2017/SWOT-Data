@@ -5,6 +5,9 @@ __MACOSX/
 .venv/
 venv/
 data/
+!Estimation_of_daily_discharge_DevSet/data/
+!Estimation_of_daily_discharge_DevSet/data/static_nc/
+!Estimation_of_daily_discharge_DevSet/data/static_nc/*.nc
 outputs/
 results/
 figures/

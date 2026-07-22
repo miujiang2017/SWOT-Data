@@ -48,7 +48,7 @@ function [basins, priorsData, resultsData, obsPercent, k] = buildBasinsFromSourc
 priorsData = read_SoS_Priorsv005(cfg.paths.sosDatasetDir, cfg.data.filePrefix, 16);
 basins = enumerate_subset_paths_by_basin(priorsData, cfg.data.filePrefix);
 basins = add_SoS_priors_to_basins(basins, priorsData);
-basins = add_SVS_gauge_to_basins(basins);
+basins = add_SVS_gauge_to_basins(basins, cfg.data.svsFile);
 
 resultsData = read_SoS_Resultsv005(cfg.paths.sosDatasetDir, cfg.data.filePrefix, cfg.data.sosType);
 basins = add_SoS_results_to_basins(basins, resultsData, cfg.data.irisFile);

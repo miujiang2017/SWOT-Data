@@ -6,6 +6,7 @@ legacy_dir = fullfile(pwd, 'legacy');
 if isfolder(legacy_dir)
     addpath(genpath(legacy_dir));
 end
+static_nc_dir = fullfile(pwd, 'data', 'static_nc');
 
 addpath(fullfile(pwd, '..', 'RiverSP'));
 addpath(fullfile(pwd, '..', 'SWORD V16'));
@@ -42,12 +43,12 @@ basins =  enumerate_subset_paths_by_basin(SoS_PriorsData_v16, file_prefix);
 basins = add_SoS_priors_to_basins(basins, SoS_PriorsData_v16);
 
 % add SVS gauge discharge
-basins = add_SVS_gauge_to_basins(basins);%v16
+basins = add_SVS_gauge_to_basins(basins, fullfile(static_nc_dir, 'SVS_v1_0_1.nc'));%v16
 % basins = add_SVS_gauge_to_basins2(basins, file_prefix);% v17
 %% read result
 SoS_ResultsData = read_SoS_Resultsv005(folder_path, file_prefix, sos_type);
-IRIS_file = 'IRIS_2.9.nc'; % read IRIS (SWORD 16)
-%IRIS_file = 'IRIS_3.3.nc'; % read IRIS (SWORD 17)
+IRIS_file = fullfile(static_nc_dir, 'IRIS_2.9.nc'); % read IRIS (SWORD 16)
+%IRIS_file = fullfile(static_nc_dir, 'IRIS_3.3.nc'); % read IRIS (SWORD 17)
 basins = add_SoS_results_to_basins(basins, SoS_ResultsData, IRIS_file);
 use_svs = true;
 out = obs_percent(basins, use_svs);

@@ -1,6 +1,8 @@
-function basins = add_SVS_gauge_to_basins(basins)
+function basins = add_SVS_gauge_to_basins(basins, ncfile)
 
-ncfile = 'SVS_v1_0_1.nc';
+if nargin < 2 || isempty(ncfile)
+    ncfile = default_svs_file();
+end
 
 time = ncread(ncfile, 'time');
 Q = ncread(ncfile, 'Q');
@@ -45,4 +47,14 @@ for i = 1:length(basins)
     end
 end
 
+end
+
+function ncfile = default_svs_file()
+devSetDir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
+candidate = fullfile(devSetDir, 'data', 'static_nc', 'SVS_v1_0_1.nc');
+if isfile(candidate)
+    ncfile = candidate;
+else
+    ncfile = 'SVS_v1_0_1.nc';
+end
 end

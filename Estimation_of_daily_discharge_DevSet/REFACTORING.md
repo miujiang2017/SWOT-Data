@@ -19,7 +19,7 @@ translation and method expansion easier without changing current numerical resul
 ```text
 config
   Defines paths, SoS region/type, date range, state window length, products,
-  cache policy, validation, plotting, and output files.
+  static netCDF files, cache policy, validation, plotting, and output files.
 
 pipeline
   Orchestrates setup, data preparation, estimator execution, validation, and plots.
@@ -29,6 +29,11 @@ legacy
   `eval`, `plot`, `diagnostics`, `utils`). Function bodies are intentionally kept
   numerically unchanged, so old scripts can still call the same function names
   after `legacy/` is added to the MATLAB path.
+
+data/static_nc
+  Versioned static netCDF inputs used by the estimator support code, including
+  IRIS slope data and SVS discharge data. Large SoS product files remain outside
+  this folder and are referenced through `cfg.paths.sosDatasetDir`.
 
 cache
   Loads existing basinsv16_*.mat and Phi_save/Q_save caches. This avoids repeated
@@ -103,6 +108,8 @@ unless explicitly requested.
 Estimation_of_daily_discharge_DevSet/
   main.m
   main_refactored.m
+  data/
+    static_nc/
   +swot/
     +config/
     +pipeline/

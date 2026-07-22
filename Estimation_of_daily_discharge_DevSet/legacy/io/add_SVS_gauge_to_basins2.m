@@ -1,4 +1,4 @@
-function basins = add_SVS_gauge_to_basins2(basins, file_prefix)
+function basins = add_SVS_gauge_to_basins2(basins, file_prefix, svs_ncfile)
 % add_SVS_gauge_to_basins2
 %
 % 逻辑：
@@ -29,7 +29,9 @@ function basins = add_SVS_gauge_to_basins2(basins, file_prefix)
     baseDir = 'SWORD V16';
 
     %% ---------- 读取 SVS 文件 ----------
-    svs_ncfile = 'SVS_v1_0_1.nc';
+    if nargin < 3 || isempty(svs_ncfile)
+        svs_ncfile = default_svs_file();
+    end
 
     if ~isfile(svs_ncfile)
         error('SVS nc file not found: %s', svs_ncfile);
@@ -217,4 +219,14 @@ function basins = add_SVS_gauge_to_basins2(basins, file_prefix)
     fprintf('Basin reaches found in mapped regional SVS v16 IDs: %d\n', n_found_svs);
     fprintf('Basin reaches not found in mapped regional SVS v16 IDs: %d\n', n_missing_svs);
 
+end
+
+function ncfile = default_svs_file()
+devSetDir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
+candidate = fullfile(devSetDir, 'data', 'static_nc', 'SVS_v1_0_1.nc');
+if isfile(candidate)
+    ncfile = candidate;
+else
+    ncfile = 'SVS_v1_0_1.nc';
+end
 end
