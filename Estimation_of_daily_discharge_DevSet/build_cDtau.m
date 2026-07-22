@@ -1,6 +1,18 @@
-function [data_KF_out] = build_cDtau(data_KF_out)
+function [data_KF_out] = build_cDtau(data_KF_out, state_ep)
+% BUILD_CDTAU Estimate c, D, and the WSE-based 1/e decorrelation time.
+%
+% state_ep is optional and defaults to 22 days. The maximum tau is set to
+% twice this state window, while the reach-specific lower bound is limited
+% by the effective WSE sampling interval.
+
+if nargin < 2 || isempty(state_ep)
+    state_ep = 22;
+end
+validateattributes(state_ep, {'numeric'}, ...
+    {'scalar','real','finite','positive'}, mfilename, 'state_ep');
+
 % Loop through each part in data_KF_out
-for ib =  1:numel(data_KF_out)
+for ib =  1:6%numel(data_KF_out)
     % Directly work on the current part in data_KF_out
     nPaths = numel(data_KF_out(ib).paths);  % Number of paths for this part
 
@@ -25,9 +37,10 @@ for ib =  1:numel(data_KF_out)
         c = nan(nR, 1);
         D = nan(nR, 1);
         tau = nan(nR, 1);
-        min_tau_obs = 6;
+        min_tau_obs = 10;
+        min_pairs_per_bin = 10;
         tau_min = 2 * 86400;
-        tau_max = 45 * 86400;
+        tau_max = 60* 86400;%2 * state_ep * 86400;
 
         % Extract necessary data for this path
         w_sword = data_KF_out(ib).w_sword{ip};  % Width for this path
@@ -80,8 +93,11 @@ for ib =  1:numel(data_KF_out)
                 continue;
             end
 
-            % Define bin width for grouping time lags (based on sampling interval)
-            bin_width = 4 * mean(diff(time_valid));  % Width of lag bins in days
+            % Keep the original four-gap smoothing scale, but use the
+            % median gap so long missing intervals do not inflate the bins.
+            % The first lag-bin center is therefore 2*dt_eff.
+            dt_eff = median(diff(time_valid), 'omitnan');
+            bin_width = 4 * dt_eff;
             if ~isfinite(bin_width) || bin_width <= 0
                 continue;
             end
@@ -102,13 +118,19 @@ for ib =  1:numel(data_KF_out)
             end
             % Construct lag bins and compute mean correlation within each bin
             max_lag    = max(acf_data(:,1));                     % Maximum time lag
-            edges      = 0:bin_width:max_lag;                    % Bin boundaries
+            edges      = 0:bin_width:(max_lag + bin_width);      % Bin boundaries
             lag_centers = edges(1:end-1) + bin_width/2;          % Bin center values
             acf_vals   = NaN(length(lag_centers), 1);            % Binned ACF values
+            pair_counts = zeros(length(lag_centers), 1);
 
             % Average the correlation samples within each lag bin
             for k = 1:length(lag_centers)
-                idx = acf_data(:,1) >= edges(k) & acf_data(:,1) < edges(k+1);
+                if k < length(lag_centers)
+                    idx = acf_data(:,1) >= edges(k) & acf_data(:,1) < edges(k+1);
+                else
+                    idx = acf_data(:,1) >= edges(k) & acf_data(:,1) <= edges(k+1);
+                end
+                pair_counts(k) = sum(idx);
                 if any(idx)
                     acf_vals(k) = mean(acf_data(idx, 2));
                 else
@@ -119,12 +141,47 @@ for ib =  1:numel(data_KF_out)
             % Normalize the ACF by the variance to obtain correlation coefficients
             acf_vals = acf_vals / var(h_valid);
 
+            % A lag bin supported by only a few pairs is too unstable to
+            % determine the first 1/e crossing.
+            acf_vals(pair_counts < min_pairs_per_bin) = NaN;
+
+            % Suppress an isolated noisy bin while retaining the original
+            % empirical 1/e-crossing definition.
+            acf_smooth = movmedian(acf_vals, 3, 'omitnan');
+
             % Find the first lag where ACF drops below 1/e (≈ 0.3679)
-            idx = find(acf_vals < 1/exp(1), 1, 'first');
+            crossing_level = 1 / exp(1);
+            idx = find(isfinite(acf_vals) & isfinite(acf_smooth) & ...
+                acf_smooth < crossing_level, 1, 'first');
 
             % Store the decorrelation length if found
             if ~isempty(idx)
-                decorrelation_lengths(r) = lag_centers(idx);
+                tau_day = lag_centers(idx);
+
+                % Interpolate between the nearest supported bins on either
+                % side of 1/e to avoid quantizing tau at bin centers.
+                idx_prev = find(isfinite(acf_vals(1:idx-1)) & ...
+                    isfinite(acf_smooth(1:idx-1)) & ...
+                    acf_smooth(1:idx-1) >= crossing_level, 1, 'last');
+                if ~isempty(idx_prev)
+                    rho1 = acf_smooth(idx_prev);
+                    rho2 = acf_smooth(idx);
+                    t1 = lag_centers(idx_prev);
+                    t2 = lag_centers(idx);
+                    if isfinite(rho1) && isfinite(rho2) && rho1 ~= rho2
+                        tau_interp = t1 + (crossing_level-rho1) * ...
+                            (t2-t1) / (rho2-rho1);
+                        if isfinite(tau_interp) && tau_interp >= t1 && tau_interp <= t2
+                            tau_day = tau_interp;
+                        end
+                    end
+                end
+
+                % Do not claim a decorrelation time shorter than the
+                % typical observation interval of this reach.
+                tau_min_reach_day = max(tau_min / 86400, dt_eff);
+                tau_day = min(max(tau_day, tau_min_reach_day), tau_max / 86400);
+                decorrelation_lengths(r) = tau_day;
             end
         end
 
@@ -143,7 +200,7 @@ for ib =  1:numel(data_KF_out)
                 S_row = cell2mat(S_row(non_empty_idx));
                 % c(i) = (5 / 3) * 1.2 * mean((W_row)'.^0.8 .* (abs(S_row))'.^0.6);
              %  c(i) = (5 / 3) * 1.627053 * mean(W_row)'.^0.8 .* mean(abs(S_row))'.^0.6;
-                   c(i) = (5 / 3) * 1.627053 *w_sword(i).^0.8 .* (abs(s_sword(i)))'.^0.6;
+                   c(i) = (5 / 3) * 1.025247 *w_sword(i).^0.8 .* (abs(s_sword(i)))'.^0.6;
                 % 原始方案：直接对每个 measurement 算 Q/(2WS) 后取 median，容易被很小的瞬时 slope 放大
                 D(i) = median(abs(Q_prior(i,1) ./ (2 * W_row .* abs(S_row))));
                 W_eff = median(W_row(isfinite(W_row) & W_row > 0), 'omitnan');
