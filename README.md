@@ -7,6 +7,16 @@ Included:
 - MATLAB source files (`.m`)
 - NetCDF files (`.nc`) from the DevSet folder
 
+Refactored entry point:
+
+- `Estimation_of_daily_discharge_DevSet/main_refactored.m`
+- `Estimation_of_daily_discharge_DevSet/+swot/`
+- `Estimation_of_daily_discharge_DevSet/REFACTORING.md`
+
+The original `main.m` is kept unchanged as the legacy research script. The
+refactored entry point wraps the same numerical routines in a config-driven
+pipeline so runs can be chunked, cached, and extended more safely.
+
 Excluded:
 
 - MATLAB data/result files (`.mat`)
