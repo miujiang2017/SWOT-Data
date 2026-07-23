@@ -4,7 +4,7 @@ function [data_KF_out, removed_info] = filter_KF(data_KF)
 % 删除条件：
 %   若 wse_RiverSP 或 width_RiverSP 或 slope_RiverSP 中，
 %   该 path 的 n×m cell 全部为 []，则删除该 path。
-%   若 wse_RiverSP 中，该 path 的每一个 reach 都只有 <= 4 个有效观测，
+%   若 wse_RiverSP 中，该 path 没有任何 reach 达到 10 个有效观测，
 %   也删除该 path。
 %
 % filter 完以后：
@@ -23,7 +23,7 @@ data_KF_out = data_KF;
 
 nB = numel(data_KF_out);
 sp_fields = {'wse_RiverSP','width_RiverSP','slope_RiverSP'};
-min_wse_obs_per_reach = 4;
+required_wse_obs = 10;
 
 keep_basin = true(nB,1);
 
@@ -85,7 +85,7 @@ for ib = 1:nB
 
         if any(field_all_empty)
             remove_reason = 'empty_riversp_field';
-        elseif path_has_too_few_wse_obs(data_KF_out(ib), p, min_wse_obs_per_reach)
+        elseif path_has_too_few_wse_obs(data_KF_out(ib), p, required_wse_obs)
             remove_reason = 'too_few_wse_observations';
         end
 
@@ -125,8 +125,8 @@ print_product_ratio_relative_to_svs_nonzero_only(data_KF_out);
 end
 
 
-function tf = path_has_too_few_wse_obs(basin_data, path_idx, min_obs)
-% true: 这个 path 里没有任何 reach 的 WSE 有效观测数超过 min_obs。
+function tf = path_has_too_few_wse_obs(basin_data, path_idx, required_obs)
+% true: 这个 path 里没有任何 reach 达到 required_obs 个有效 WSE。
 
 tf = true;
 
@@ -146,7 +146,7 @@ n_reach = size(wse_path, 1);
 
 for r = 1:n_reach
     n_valid_obs = count_valid_wse_obs(wse_path(r, :));
-    if n_valid_obs > min_obs
+    if n_valid_obs >= required_obs
         tf = false;
         return;
     end
