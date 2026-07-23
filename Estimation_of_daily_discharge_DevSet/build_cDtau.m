@@ -11,8 +11,11 @@ end
 validateattributes(state_ep, {'numeric'}, ...
     {'scalar','real','finite','positive'}, mfilename, 'state_ep');
 
+basins_with_removed_tau_paths = [];
+removed_tau_basin_path = zeros(0, 2);
+
 % Loop through each part in data_KF_out
-for ib =  1:numel(data_KF_out)
+for ib =  1:6%numel(data_KF_out)
     % Directly work on the current part in data_KF_out
     nPaths = numel(data_KF_out(ib).paths);  % Number of paths for this part
 
@@ -26,6 +29,7 @@ for ib =  1:numel(data_KF_out)
     if ~isfield(data_KF_out(ib), 'tau')
         data_KF_out(ib).tau = cell(1, nPaths);  % Initialize 'tau' field as cell array
     end
+    keep_tau_path = true(nPaths, 1);
 
     % Loop through each path in the part
     for ip = 1:nPaths
@@ -38,7 +42,6 @@ for ib =  1:numel(data_KF_out)
         D = nan(nR, 1);
         tau = nan(nR, 1);
         min_tau_obs = 10;
-        min_pairs_per_bin = 10;
         tau_min = 2 * 86400;
         tau_max = 2 * state_ep * 86400;
 
@@ -92,11 +95,14 @@ for ib =  1:numel(data_KF_out)
             if N < min_tau_obs || var(h_valid) <= 0
                 continue;
             end
+            n_total_pairs = N * (N - 1) / 2;
+            min_pairs_per_bin = min(10, ...
+                max(5, ceil(0.05 * n_total_pairs)));
 
             % Keep the original four-gap smoothing scale, but use the
             % median gap so long missing intervals do not inflate the bins.
             % The first lag-bin center is therefore 2*dt_eff.
-            dt_eff = median(diff(time_valid), 'omitnan');
+            dt_eff = mean(diff(time_valid), 'omitnan');
             bin_width = 4 * dt_eff;
             if ~isfinite(bin_width) || bin_width <= 0
                 continue;
@@ -145,14 +151,10 @@ for ib =  1:numel(data_KF_out)
             % determine the first 1/e crossing.
             acf_vals(pair_counts < min_pairs_per_bin) = NaN;
 
-            % Suppress an isolated noisy bin while retaining the original
-            % empirical 1/e-crossing definition.
-            acf_smooth = movmedian(acf_vals, 3, 'omitnan');
-
-            % Find the first lag where ACF drops below 1/e (≈ 0.3679)
+            % Find the first supported raw-ACF lag below 1/e (≈ 0.3679).
             crossing_level = 1 / exp(1);
-            idx = find(isfinite(acf_vals) & isfinite(acf_smooth) & ...
-                acf_smooth < crossing_level, 1, 'first');
+            idx = find(isfinite(acf_vals) & ...
+                acf_vals < crossing_level, 1, 'first');
 
             % Store the decorrelation length if found
             if ~isempty(idx)
@@ -161,11 +163,10 @@ for ib =  1:numel(data_KF_out)
                 % Interpolate between the nearest supported bins on either
                 % side of 1/e to avoid quantizing tau at bin centers.
                 idx_prev = find(isfinite(acf_vals(1:idx-1)) & ...
-                    isfinite(acf_smooth(1:idx-1)) & ...
-                    acf_smooth(1:idx-1) >= crossing_level, 1, 'last');
+                    acf_vals(1:idx-1) >= crossing_level, 1, 'last');
                 if ~isempty(idx_prev)
-                    rho1 = acf_smooth(idx_prev);
-                    rho2 = acf_smooth(idx);
+                    rho1 = acf_vals(idx_prev);
+                    rho2 = acf_vals(idx);
                     t1 = lag_centers(idx_prev);
                     t2 = lag_centers(idx);
                     if isfinite(rho1) && isfinite(rho2) && rho1 ~= rho2
@@ -182,6 +183,14 @@ for ib =  1:numel(data_KF_out)
                 tau_min_reach_day = max(tau_min / 86400, dt_eff);
                 tau_day = min(max(tau_day, tau_min_reach_day), tau_max / 86400);
                 decorrelation_lengths(r) = tau_day;
+            else
+                supported_acf = isfinite(acf_vals);
+                if nnz(supported_acf) >= 2 && ...
+                        all(acf_vals(supported_acf) >= crossing_level)
+                    % The supported ACF remains above 1/e throughout the
+                    % observed lags, so tau is right-censored at tau_max.
+                    decorrelation_lengths(r) = tau_max / 86400;
+                end
             end
         end
 
@@ -349,6 +358,39 @@ for ib =  1:numel(data_KF_out)
         data_KF_out(ib).c{ip} = c;  % Store c for this path
         data_KF_out(ib).D{ip} = D;  % Store D for this path
         data_KF_out(ib).tau{ip} = tau;  % Store tau for this path
+        keep_tau_path(ip) = any(isfinite(tau(:)) & tau(:) > 0);
+    end
+
+    % Remove a path only when no reach has a finite positive tau after all
+    % reach estimates and path-wise filling have been completed.
+    if any(~keep_tau_path)
+        basins_with_removed_tau_paths(end+1, 1) = ib; %#ok<AGROW>
+        removed_path_idx = find(~keep_tau_path);
+        removed_tau_basin_path = [removed_tau_basin_path; ...
+            repmat(ib, numel(removed_path_idx), 1), removed_path_idx(:)]; %#ok<AGROW>
+        fields_kf = fieldnames(data_KF_out(ib));
+        for f = 1:numel(fields_kf)
+            field_name = fields_kf{f};
+            field_value = data_KF_out(ib).(field_name);
+            if iscell(field_value) && numel(field_value) == nPaths
+                data_KF_out(ib).(field_name) = field_value(keep_tau_path);
+            end
+        end
+        fprintf('Basin %d: removed %d path(s) with no valid tau.\n', ...
+            ib, nnz(~keep_tau_path));
+    end
+end
+
+if isempty(basins_with_removed_tau_paths)
+    fprintf('No basins contained paths removed for invalid tau.\n');
+else
+    fprintf('Basins containing paths removed for invalid tau: %s\n', ...
+        mat2str(unique(basins_with_removed_tau_paths(:).')));
+    fprintf('Removed invalid-tau paths (original indices):\n');
+    for i_removed = 1:size(removed_tau_basin_path, 1)
+        fprintf('  Basin %d, Path %d\n', ...
+            removed_tau_basin_path(i_removed, 1), ...
+            removed_tau_basin_path(i_removed, 2));
     end
 end
 end
